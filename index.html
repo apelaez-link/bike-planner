@@ -37,7 +37,7 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
   box-shadow:0 -8px 40px #00000060;
   transition:transform .35s cubic-bezier(.4,0,.2,1);
   padding-bottom:var(--safe-bot);
-  max-height:92vh;
+  height:92vh;
   display:flex;flex-direction:column;
 }
 #panel.collapsed{transform:translateY(calc(100% - 120px))}
@@ -72,7 +72,7 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
 
 /* panel body */
-#panel-body{flex:1;overflow-y:auto;padding:0 1.25rem .5rem;-webkit-overflow-scrolling:touch}
+#panel-body{flex:1;min-height:0;overflow-y:auto;padding:0 1.25rem .5rem;-webkit-overflow-scrolling:touch}
 
 /* inputs */
 .input-row{
@@ -148,6 +148,14 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
 
 .rc-footer{display:flex;align-items:center;justify-content:space-between;margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--border)}
 .rc-dist{font-family:var(--mono);font-size:.7rem;color:var(--dim)}
+.rc-time{font-family:var(--mono);font-size:.7rem;color:var(--sub)}
+#more-routes-btn{
+  width:100%;margin-top:.2rem;margin-bottom:.6rem;padding:.6rem;
+  background:transparent;border:1px solid var(--border2);border-radius:12px;
+  color:var(--sub);font-family:'Syne',sans-serif;font-size:.82rem;font-weight:600;
+  cursor:pointer;transition:border-color .15s,color .15s
+}
+#more-routes-btn:active{border-color:var(--green);color:var(--green)}
 .start-btn{
   background:var(--s3);border:1px solid var(--border2);
   color:var(--text);border-radius:8px;padding:.4rem .85rem;
@@ -618,7 +626,10 @@ function plan(){
         const av=Math.min(avail(bO,cO),avail(da,capA),avail(bb,capB),avail(dD,cD));
         const ds=Math.max(0,1-totalM/30000);
         const dw=Math.max(0,1-tp.d/XFER_RADIUS); // 1=same spot, 0=300m walk
-        scored.push({OS,TA:tp.a,TB:tp.b,DS,walkM:tp.d,totalM:Math.round(totalM),
+        // time: walk 80m/min, cycle 220m/min, all with 1.25 road factor
+        const timeMin=Math.round(((dOS+tp.d+dDS)*1.25/80)+((rideA+rideB)*1.25/220));
+        scored.push({OS,TA:tp.a,TB:tp.b,DS,walkM:tp.d,totalM:Math.round(totalM),timeMin,
+          segs:{dOS:Math.round(dOS),rideA:Math.round(rideA),rideB:Math.round(rideB),dDS:Math.round(dDS)},
           av:{bO,da,bb,dD},avScore:av,score:av*.55+ds*.20+dw*.25});
       }
     }
@@ -629,7 +640,7 @@ function plan(){
   for(const r of scored){
     const k=r.OS.station_id+"_"+r.TA.station_id+"_"+r.TB.station_id;
     if(!seen.has(k)){seen.add(k);out.push(r);}
-    if(out.length>=3) break;
+    if(out.length>=10) break;
   }
   return out;
 }
@@ -685,28 +696,45 @@ async function drawRoute(r){
   });
 }
 
-function renderRoutes(routes){
+function routeCard(r,i){
+  const rk=risk(r.avScore);
+  const {bO,da,bb,dD}=r.av;
+  const km=(r.totalM/1000).toFixed(1);
+  const walkLabel=r.walkM<10?"mismo punto":`${r.walkM} m a pie`;
+  const {dOS,dDS}=r.segs;
+  return `<div class="route-card${i===0?" active":""}" data-i="${i}" onclick="selectRoute(${i})">
+    <div class="rc-top">
+      <div class="rc-label">Opción ${i+1}</div>
+      <span class="rc-badge ${rk.cls}">${rk.label}</span>
+    </div>
+    <div class="leg"><span class="leg-icon">🟢</span><div class="leg-text">
+      <strong>${r.OS.name||"Est. AMBici"}</strong> · ${dOS}m andando<br>
+      Bicis AMBici: <span class="${numCls(bO)}">${bO}</span>
+    </div></div>
+    <div class="leg"><span class="leg-icon">🔀</span><div class="leg-text">
+      <strong>Transbordo</strong> · <span style="color:var(--purple)">${walkLabel}</span><br>
+      Anclajes AMBici: <span class="${numCls(da)}">${da}</span> · Bicis Bicing: <span class="${numCls(bb)}">${bb}</span>
+    </div></div>
+    <div class="leg"><span class="leg-icon">🔵</span><div class="leg-text">
+      <strong>${r.DS.name||"Est. Bicing"}</strong> · ${dDS}m andando<br>
+      Anclajes Bicing: <span class="${numCls(dD)}">${dD}</span>
+    </div></div>
+    <div class="rc-footer">
+      <span class="rc-dist">~${km} km</span>
+      <span class="rc-time">⏱ ~${r.timeMin} min</span>
+      <button class="start-btn" onclick="startMonitor(${i});event.stopPropagation()">▶ Iniciar</button>
+    </div>
+  </div>`;
+}
+
+function renderRoutes(routes,showAll=false){
   const box=document.getElementById("routes-box");
   if(!routes.length){ box.innerHTML=`<div class="empty"><div class="e-icon">⚠️</div><p>Sin rutas viables</p></div>`; return; }
-  box.innerHTML=routes.map((r,i)=>{
-    const rk=risk(r.avScore);
-    const {bO,da,bb,dD}=r.av;
-    const km=(r.totalM/1000).toFixed(1);
-    const sameXfer=hav(r.TA.lat,r.TA.lon,r.TB.lat,r.TB.lon)<50;
-    return `<div class="route-card${i===0?" active":""}" data-i="${i}" onclick="selectRoute(${i})">
-      <div class="rc-top">
-        <div class="rc-label">Opción ${i+1}${sameXfer?"":" <span style='font-size:.65rem;color:var(--purple)'>+walk "+r.walkM+"m</span>"}</div>
-        <span class="rc-badge ${rk.cls}">${rk.label}</span>
-      </div>
-      <div class="leg"><span class="leg-icon">🟢</span><div class="leg-text"><strong>${r.OS.name||"Est. AMBici"}</strong><br>Bicis AMBici: <span class="${numCls(bO)}">${bO}</span></div></div>
-      <div class="leg"><span class="leg-icon">🔀</span><div class="leg-text"><strong>Transbordo${sameXfer?"":" (~"+r.walkM+"m)"}</strong><br>Anclajes AMBici: <span class="${numCls(da)}">${da}</span> · Bicis Bicing: <span class="${numCls(bb)}">${bb}</span></div></div>
-      <div class="leg"><span class="leg-icon">🔵</span><div class="leg-text"><strong>${r.DS.name||"Est. Bicing"}</strong><br>Anclajes Bicing: <span class="${numCls(dD)}">${dD}</span></div></div>
-      <div class="rc-footer">
-        <span class="rc-dist">~${km} km</span>
-        <button class="start-btn" onclick="startMonitor(${i});event.stopPropagation()">▶ Iniciar viaje</button>
-      </div>
-    </div>`;
-  }).join("");
+  const visible=showAll?routes:routes.slice(0,5);
+  const moreBtn=(!showAll&&routes.length>5)
+    ?`<button id="more-routes-btn" onclick="renderRoutes(S.routes,true)">Ver ${routes.length-5} rutas más…</button>`
+    :"";
+  box.innerHTML=visible.map((r,i)=>routeCard(r,i)).join("")+moreBtn;
 }
 
 function renderAlerts(r){
