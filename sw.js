@@ -1,4 +1,4 @@
-const CACHE = 'bikeplanner-v6';
+const CACHE = 'bikeplanner-v7';
 const SHELL = [
   '/',
   '/index.html',

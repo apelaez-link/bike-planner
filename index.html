@@ -249,6 +249,8 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
 }
 .map-btn:active{background:var(--s2)}
 #mc-route{display:none}
+#mc-follow{display:none}
+#mc-follow.active{background:var(--green);border-color:var(--green);color:#08090D}
 </style>
 </head>
 <body>
@@ -257,6 +259,7 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
 
   <div id="map-controls">
     <button class="map-btn" id="mc-locate" title="Mi ubicación">📍</button>
+    <button class="map-btn" id="mc-follow" title="Seguir ubicación">🧭</button>
     <button class="map-btn" id="mc-route"  title="Centrar ruta">🎯</button>
   </div>
 
@@ -390,7 +393,7 @@ function mkPin(color,ch="●"){
 function mkUserDot(){
   return L.divIcon({className:"",html:'<div class="user-dot"></div>',iconAnchor:[8,8]});
 }
-map.on("dragstart",()=>{ S.followUser=false; });
+map.on("dragstart",()=>{ S.followUser=false; updateFollowBtn(); });
 
 let originMk=null, destMk=null;
 map.on("click",({latlng})=>{
@@ -554,13 +557,22 @@ document.getElementById("gps-btn").addEventListener("click",()=>{
 });
 
 // ── FLOATING MAP BUTTONS ──────────────────────────────────────────────────────
+function updateFollowBtn(){
+  const btn=document.getElementById("mc-follow");
+  btn.classList.toggle("active",S.followUser);
+}
+
 document.getElementById("mc-locate").addEventListener("click",()=>{
   if(S.monitorTimer){
-    S.followUser=true;
     if(S.userLL) setViewVisible(S.userLL,16);
   } else {
     geolocate(c=>setViewVisible({lat:c.latitude,lng:c.longitude},16));
   }
+});
+document.getElementById("mc-follow").addEventListener("click",()=>{
+  S.followUser=!S.followUser;
+  updateFollowBtn();
+  if(S.followUser && S.userLL) setViewVisible(S.userLL,16);
 });
 document.getElementById("mc-route").addEventListener("click",()=>{
   if(S.activeBounds) fitVisible(S.activeBounds);
@@ -1025,6 +1037,8 @@ function startMonitor(i){
   S.monitorPhase=0;
   S.followUser=true;
   document.getElementById("monitor-bar").style.display="";
+  document.getElementById("mc-follow").style.display="flex";
+  updateFollowBtn();
   document.getElementById("monitor-log").innerHTML="";
   updatePhaseBar(0);
   logM(PHASE_LABELS[0]);
@@ -1112,6 +1126,7 @@ function stopMonitor(arrived=false){
   if(S.watchId!==null){ navigator.geolocation.clearWatch(S.watchId); S.watchId=null; }
   if(S.userMarker){ map.removeLayer(S.userMarker); S.userMarker=null; }
   S.followUser=false; S.monitorPhase=0;
+  document.getElementById("mc-follow").style.display="none";
   if(!arrived) document.getElementById("monitor-bar").style.display="none";
   setStatus("ok",statusText());
   if(!arrived) logM("Monitoreo detenido");
