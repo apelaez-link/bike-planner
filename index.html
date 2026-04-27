@@ -986,7 +986,12 @@ function onGPSUpdate(coords){
   } else {
     S.userMarker.setLatLng([lat,lng]);
   }
-  if(S.followUser) map.panTo([lat,lng],{animate:true,duration:0.8});
+  if(S.followUser){
+    const z=map.getZoom();
+    const pt=map.project([lat,lng],z);
+    const center=map.unproject([pt.x,pt.y+panelCoverPx()/2],z);
+    map.panTo(center,{animate:true,duration:0.8});
+  }
   detectPhase(lat,lng);
 }
 
