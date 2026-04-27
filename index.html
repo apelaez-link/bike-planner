@@ -240,24 +240,21 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-// ── GBFS FEEDS (direct — both APIs have Access-Control-Allow-Origin: *) ───────
+// ── GBFS FEEDS ────────────────────────────────────────────────────────────────
 const FEEDS = {
-  ambici_info:   "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bs/station_information.json",
-  ambici_status: "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bs/station_status.json",
+  ambici_info:   "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bs/en/station_information.json",
+  ambici_status: "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bs/en/station_status.json",
   bicing_info:   "https://api.bsmsa.eu/ext/api/bsm/gbfs/v2/en/station_information",
   bicing_status: "https://api.bsmsa.eu/ext/api/bsm/gbfs/v2/en/station_status",
 };
 
 async function fetchGBFS(url) {
-  try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (r.ok) return r.json();
-  } catch {}
-  // Fallback por si el servicio está temporalmente caído o bloqueado
-  const proxied = "https://corsproxy.io/?" + encodeURIComponent(url);
-  const r2 = await fetch(proxied, { signal: AbortSignal.timeout(12000) });
-  if (!r2.ok) throw new Error(`GBFS fetch failed (${r2.status})`);
-  return r2.json();
+  const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  const json = await r.json();
+  // WSO2 API Manager blocked response comes as XML wrapped in JSON-ish — detect it
+  if (!json?.data) throw new Error("Respuesta inválida");
+  return json;
 }
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
@@ -402,10 +399,14 @@ function setDest(lat,lng,label){
 }
 
 function checkReady(){
-  document.getElementById("plan-btn").disabled=!(S.originLL&&S.destLL&&S.ambiciInfo.length>0);
+  const btn=document.getElementById("plan-btn");
+  const ready=S.originLL&&S.destLL&&S.ambiciInfo.length>0&&S.bicingInfo.length>0;
+  btn.disabled=!ready;
+  btn.textContent=(!S.bicingOk&&S.ambiciInfo.length>0)?"Bicing no disponible":"Calcular rutas";
 }
 function statusText(){
-  return `${S.ambiciInfo.length} AMBici · ${S.bicingInfo.length} Bicing · ${S.transferPairs.length} transbordos`;
+  const b=S.bicingOk?`${S.bicingInfo.length} Bicing`:"Bicing ⚠";
+  return `${S.ambiciInfo.length} AMBici · ${b} · ${S.transferPairs.length} transbordos`;
 }
 
 // ── HAVERSINE ─────────────────────────────────────────────────────────────────
@@ -416,40 +417,70 @@ function hav(la1,ln1,la2,ln2){
 }
 
 // ── DATA LOADING ──────────────────────────────────────────────────────────────
-async function loadData(){
-  setStatus("loading","Cargando datos…");
+async function loadBicing(){
   try{
-    const [ai,as_,bi,bs]=await Promise.all([
-      fetchGBFS(FEEDS.ambici_info),
-      fetchGBFS(FEEDS.ambici_status),
+    const [bi,bs]=await Promise.all([
       fetchGBFS(FEEDS.bicing_info),
       fetchGBFS(FEEDS.bicing_status),
     ]);
-    S.ambiciInfo=ai.data.stations;
     S.bicingInfo=bi.data.stations;
-    as_.data.stations.forEach(s=>S.ambiciStatus[s.station_id]=s);
     bs.data.stations.forEach(s=>S.bicingStatus[s.station_id]=s);
-    computePairs();
-    drawTransferDots();
-    setStatus("ok",statusText());
-    checkReady();
-    setInterval(refreshStatus,30000);
+    S.bicingOk=true;
+    return true;
   } catch(e){
-    setStatus("error","Error: "+e.message);
-    addAlert("No se pudieron cargar los datos GBFS. Comprueba la conexión.","danger");
+    S.bicingOk=false;
+    return false;
   }
+}
+
+async function loadData(){
+  setStatus("loading","Cargando datos…");
+  try{
+    const [ai,as_]=await Promise.all([
+      fetchGBFS(FEEDS.ambici_info),
+      fetchGBFS(FEEDS.ambici_status),
+    ]);
+    S.ambiciInfo=ai.data.stations;
+    as_.data.stations.forEach(s=>S.ambiciStatus[s.station_id]=s);
+  } catch(e){
+    setStatus("error","Error AMBici");
+    addAlert("No se pudieron cargar datos AMBici. Comprueba la conexión.","danger");
+    return;
+  }
+
+  const bicingOk=await loadBicing();
+  if(!bicingOk){
+    addAlert("API Bicing no disponible temporalmente — reintentando cada 30s.","warn");
+  }
+
+  computePairs();
+  drawTransferDots();
+  setStatus(bicingOk?"ok":"loading", statusText());
+  checkReady();
+  setInterval(refreshStatus,30000);
 }
 
 async function refreshStatus(){
   try{
-    const [as_,bs]=await Promise.all([
-      fetchGBFS(FEEDS.ambici_status),
-      fetchGBFS(FEEDS.bicing_status),
-    ]);
+    const as_=await fetchGBFS(FEEDS.ambici_status);
     as_.data.stations.forEach(s=>S.ambiciStatus[s.station_id]=s);
-    bs.data.stations.forEach(s=>S.bicingStatus[s.station_id]=s);
-    if(S.monitorTimer) runMonitor();
   } catch{}
+
+  const wasOk=S.bicingOk;
+  const nowOk=await loadBicing();
+  if(!wasOk && nowOk){
+    computePairs();
+    drawTransferDots();
+    addAlert("Bicing recuperado.","ok");
+    setStatus("ok",statusText());
+    checkReady();
+  } else if(!nowOk){
+    setStatus("loading",statusText());
+  } else {
+    setStatus("ok",statusText());
+  }
+
+  if(S.monitorTimer) runMonitor();
 }
 
 // ── TRANSFER PAIRS ────────────────────────────────────────────────────────────
