@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Bike Planner</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#08090D;--s1:#0F1219;--s2:#161C28;--s3:#1C2535;
+  --border:#212D42;--border2:#2A3A55;
+  --text:#E8EDF5;--sub:#8899B4;--dim:#4A5A72;
+  --green:#1DEBA0;--blue:#4D9CFF;--purple:#9B7FFF;--amber:#F0A040;--red:#FF5252;
+  --mono:'DM Mono',monospace;
+  --safe-top:env(safe-area-inset-top,0px);
+  --safe-bot:env(safe-area-inset-bottom,0px);
+}
+html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:var(--bg);color:var(--text)}
+
+/* ── LAYOUT: map bottom, panel slides up ── */
+#app{position:relative;width:100%;height:100%}
+#map{position:absolute;inset:0;z-index:1}
+#panel{
+  position:absolute;bottom:0;left:0;right:0;z-index:10;
+  background:var(--s1);
+  border-radius:20px 20px 0 0;
+  border-top:1px solid var(--border);
+  box-shadow:0 -8px 40px #00000060;
+  transition:transform .35s cubic-bezier(.4,0,.2,1);
+  padding-bottom:var(--safe-bot);
+  max-height:92vh;
+  display:flex;flex-direction:column;
+}
+#panel.collapsed{transform:translateY(calc(100% - 120px))}
+#panel.half{transform:translateY(40%)}
+#panel.full{transform:translateY(0)}
+
+/* drag handle */
+#drag-handle{
+  width:36px;height:4px;background:var(--border2);border-radius:2px;
+  margin:10px auto 0;flex-shrink:0;cursor:grab
+}
+
+/* panel header */
+#panel-header{
+  padding:.75rem 1.25rem .5rem;flex-shrink:0;
+  display:flex;align-items:center;justify-content:space-between
+}
+#panel-title{font-size:.9rem;font-weight:700;letter-spacing:-.01em}
+#panel-title .a{color:var(--green)}
+#panel-title .b{color:var(--blue)}
+#status-pill{
+  display:flex;align-items:center;gap:.4rem;
+  background:var(--s2);border:1px solid var(--border);
+  border-radius:20px;padding:.25rem .65rem;
+  font-family:var(--mono);font-size:.65rem;color:var(--sub)
+}
+#status-dot{width:6px;height:6px;border-radius:50%;background:var(--dim);flex-shrink:0}
+#status-dot.loading{background:var(--amber);animation:blink 1s infinite}
+#status-dot.ok{background:var(--green)}
+#status-dot.monitoring{background:var(--blue);animation:blink 1.5s infinite}
+#status-dot.error{background:var(--red)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* panel body */
+#panel-body{flex:1;overflow-y:auto;padding:0 1.25rem .5rem;-webkit-overflow-scrolling:touch}
+
+/* inputs */
+.input-row{
+  display:flex;align-items:center;gap:.6rem;
+  background:var(--s2);border:1px solid var(--border);
+  border-radius:12px;padding:.55rem .85rem;margin-bottom:.5rem;
+  transition:border-color .15s
+}
+.input-row:focus-within{border-color:var(--green)}
+.input-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.input-row input{
+  flex:1;background:transparent;border:none;outline:none;
+  font-family:'Syne',sans-serif;font-size:.88rem;color:var(--text);
+  min-width:0
+}
+.input-row input::placeholder{color:var(--dim)}
+.input-row .clear-btn{
+  background:none;border:none;color:var(--dim);cursor:pointer;
+  font-size:1rem;padding:0;line-height:1;flex-shrink:0
+}
+.input-gps{
+  background:none;border:none;color:var(--green);cursor:pointer;
+  font-size:1rem;padding:0;line-height:1;flex-shrink:0
+}
+
+/* plan button */
+#plan-btn{
+  width:100%;margin:.25rem 0 .75rem;padding:.75rem;
+  background:var(--green);color:#08090D;
+  border:none;border-radius:12px;
+  font-family:'Syne',sans-serif;font-size:.92rem;font-weight:700;
+  cursor:pointer;transition:filter .15s;letter-spacing:.01em
+}
+#plan-btn:active{filter:brightness(.9)}
+#plan-btn:disabled{background:var(--s3);color:var(--dim);cursor:not-allowed}
+
+/* alerts */
+.alert{
+  border-radius:10px;padding:.6rem .8rem;
+  font-size:.78rem;line-height:1.45;
+  display:flex;gap:.5rem;align-items:flex-start;margin-bottom:.4rem
+}
+.al-ok{background:#1DEBA010;border:1px solid #1DEBA025;color:#7FFFD4}
+.al-warn{background:#F0A04010;border:1px solid #F0A04025;color:#FCD080}
+.al-danger{background:#FF525210;border:1px solid #FF525225;color:#FFA0A0}
+.al-icon{flex-shrink:0}
+
+/* route cards */
+.route-card{
+  background:var(--s2);border:1.5px solid var(--border);
+  border-radius:14px;padding:.85rem;margin-bottom:.6rem;cursor:pointer;
+  transition:border-color .15s
+}
+.route-card.active{border-color:var(--green)}
+.rc-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:.65rem}
+.rc-label{font-size:.82rem;font-weight:700}
+.rc-badge{
+  font-family:var(--mono);font-size:.64rem;font-weight:500;
+  padding:.2rem .5rem;border-radius:5px
+}
+.badge-high{background:#1DEBA018;color:var(--green);border:1px solid #1DEBA030}
+.badge-med{background:#F0A04018;color:var(--amber);border:1px solid #F0A04030}
+.badge-low{background:#FF525218;color:var(--red);border:1px solid #FF525230}
+
+/* legs */
+.leg{display:flex;align-items:flex-start;gap:.6rem;margin-bottom:.35rem}
+.leg-icon{font-size:.85rem;flex-shrink:0;margin-top:.05rem}
+.leg-text{font-size:.75rem;color:var(--sub);line-height:1.4}
+.leg-text strong{color:var(--text)}
+.leg-text .num-ok{color:var(--green);font-family:var(--mono);font-weight:500}
+.leg-text .num-warn{color:var(--amber);font-family:var(--mono);font-weight:500}
+.leg-text .num-bad{color:var(--red);font-family:var(--mono);font-weight:500}
+
+.rc-footer{display:flex;align-items:center;justify-content:space-between;margin-top:.6rem;padding-top:.6rem;border-top:1px solid var(--border)}
+.rc-dist{font-family:var(--mono);font-size:.7rem;color:var(--dim)}
+.start-btn{
+  background:var(--s3);border:1px solid var(--border2);
+  color:var(--text);border-radius:8px;padding:.4rem .85rem;
+  font-family:'Syne',sans-serif;font-size:.76rem;font-weight:600;cursor:pointer
+}
+.start-btn:active{filter:brightness(1.2)}
+
+/* monitor */
+#monitor-bar{
+  background:var(--s2);border:1px solid var(--border);
+  border-radius:12px;padding:.7rem .9rem;margin-bottom:.5rem
+}
+#monitor-bar h4{font-size:.7rem;color:var(--sub);letter-spacing:.07em;text-transform:uppercase;margin-bottom:.5rem;font-weight:600}
+#monitor-log{max-height:80px;overflow-y:auto}
+.log-line{font-family:var(--mono);font-size:.68rem;color:var(--sub);padding:.1rem 0;line-height:1.4}
+.log-ts{color:var(--dim);margin-right:.4rem}
+#stop-btn{
+  margin-top:.5rem;background:none;border:1px solid var(--border2);
+  color:var(--sub);border-radius:8px;padding:.35rem .8rem;
+  font-family:'Syne',sans-serif;font-size:.74rem;cursor:pointer
+}
+
+/* empty */
+.empty{text-align:center;padding:1.5rem 0;color:var(--dim)}
+.empty .e-icon{font-size:2rem;margin-bottom:.4rem}
+.empty p{font-size:.78rem;line-height:1.5}
+
+/* map attribution */
+.leaflet-control-attribution{font-size:.55rem!important;background:#08090Da0!important;color:#4A5A72!important}
+.leaflet-control-attribution a{color:#4A5A72!important}
+.leaflet-tooltip{
+  background:var(--s2)!important;border:1px solid var(--border)!important;
+  color:var(--text)!important;font-family:'Syne',sans-serif!important;
+  font-size:.72rem!important;border-radius:8px!important;
+  box-shadow:0 4px 16px #00000060!important;padding:.3rem .6rem!important
+}
+
+/* scrollbar */
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* tap feedback */
+.route-card:active{transform:scale(.985)}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="map"></div>
+
+  <div id="panel" class="half">
+    <div id="drag-handle"></div>
+
+    <div id="panel-header">
+      <div id="panel-title"><span class="a">AMBici</span> + <span class="b">Bicing</span></div>
+      <div id="status-pill">
+        <div id="status-dot" class="loading"></div>
+        <span id="status-text">Cargando…</span>
+      </div>
+    </div>
+
+    <div id="panel-body">
+      <!-- Inputs -->
+      <div class="input-row">
+        <div class="input-dot" style="background:var(--green)"></div>
+        <input id="origin-input" type="text" placeholder="Origen (Enter para buscar)">
+        <button class="input-gps" id="gps-btn" title="Usar mi ubicación">📍</button>
+        <button class="clear-btn" id="clear-origin" style="display:none">×</button>
+      </div>
+      <div class="input-row">
+        <div class="input-dot" style="background:var(--blue)"></div>
+        <input id="dest-input" type="text" placeholder="Destino (Enter para buscar)">
+        <button class="clear-btn" id="clear-dest" style="display:none">×</button>
+      </div>
+
+      <button id="plan-btn" disabled>Calcular rutas</button>
+
+      <div id="alerts-box"></div>
+      <div id="monitor-bar" style="display:none">
+        <h4>Monitor en ruta</h4>
+        <div id="monitor-log"></div>
+        <button id="stop-btn">⏹ Detener</button>
+      </div>
+      <div id="routes-box">
+        <div class="empty"><div class="e-icon">🚴</div><p>Introduce origen y destino<br>para calcular rutas</p></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ── CORS PROXY ────────────────────────────────────────────────────────────────
+// Tries direct fetch first (some GBFS feeds allow CORS), falls back to proxy
+async function fetchGBFS(rawUrl) {
+  // Try direct first (faster, no proxy needed if CORS is open)
+  try {
+    const r = await fetch(rawUrl, { signal: AbortSignal.timeout(5000) });
+    if (r.ok) return r.json();
+  } catch {}
+  // Fallback: corsproxy.io
+  const proxied = "https://corsproxy.io/?" + encodeURIComponent(rawUrl);
+  const r2 = await fetch(proxied, { signal: AbortSignal.timeout(8000) });
+  if (!r2.ok) throw new Error("GBFS fetch failed: " + r2.status);
+  return r2.json();
+}
+
+const FEEDS = {
+  ambici_info:   "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bs/station_information.json",
+  ambici_status: "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bs/station_status.json",
+  bicing_info:   "https://api.bsmsa.eu/ext/api/bsm/gbfs/v2/en/station_information",
+  bicing_status: "https://api.bsmsa.eu/ext/api/bsm/gbfs/v2/en/station_status",
+};
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+const S = {
+  ambiciInfo:[], ambiciStatus:{}, bicingInfo:[], bicingStatus:{},
+  transferPairs:[], originLL:null, destLL:null,
+  routes:[], monitorTimer:null,
+  mapLayers:[]
+};
+
+// ── MAP ───────────────────────────────────────────────────────────────────────
+const map = L.map("map",{zoomControl:false,attributionControl:true})
+  .setView([41.40,2.18],13);
+L.control.zoom({position:"bottomright"}).addTo(map);
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",{
+  attribution:'<a href="https://carto.com/">CARTO</a>',maxZoom:19
+}).addTo(map);
+
+function mkDot(color,r=8){
+  return L.divIcon({
+    className:"",
+    html:`<div style="width:${r*2}px;height:${r*2}px;border-radius:50%;background:${color};border:2.5px solid #fff9;box-shadow:0 2px 8px #0007"></div>`,
+    iconAnchor:[r,r]
+  });
+}
+function mkPin(color,ch="●"){
+  return L.divIcon({
+    className:"",
+    html:`<div style="display:flex;flex-direction:column;align-items:center">
+      <div style="width:32px;height:32px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${color};border:2px solid #fff;box-shadow:0 3px 10px #0008;display:flex;align-items:center;justify-content:center">
+        <span style="transform:rotate(45deg);font-size:13px">${ch}</span>
+      </div>
+    </div>`,
+    iconAnchor:[16,32]
+  });
+}
+
+let originMk=null, destMk=null;
+map.on("click",({latlng})=>{
+  if(!S.originLL){ setOrigin(latlng.lat,latlng.lng); expandPanel("half"); }
+  else if(!S.destLL){ setDest(latlng.lat,latlng.lng); expandPanel("half"); }
+});
+
+// ── PANEL DRAG ────────────────────────────────────────────────────────────────
+let dragStart=null, panelStates=["collapsed","half","full"];
+const panel=document.getElementById("panel");
+const handle=document.getElementById("drag-handle");
+
+handle.addEventListener("touchstart",e=>{
+  dragStart=e.touches[0].clientY;
+},{passive:true});
+handle.addEventListener("touchend",e=>{
+  if(dragStart===null) return;
+  const diff=dragStart-e.changedTouches[0].clientY;
+  const cur=panelStates.indexOf(panel.dataset.state||"half");
+  if(diff>40 && cur<2) expandPanel(panelStates[cur+1]);
+  else if(diff<-40 && cur>0) expandPanel(panelStates[cur-1]);
+  dragStart=null;
+});
+
+function expandPanel(state){
+  panel.className="";
+  panel.classList.add(state);
+  panel.dataset.state=state;
+}
+expandPanel("half");
+
+// Tap header to toggle
+document.getElementById("panel-header").addEventListener("click",()=>{
+  const cur=panel.dataset.state||"half";
+  expandPanel(cur==="full"?"half":"full");
+});
+
+// ── GEOCODING ─────────────────────────────────────────────────────────────────
+async function geocode(q){
+  const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=es`,
+    {headers:{"Accept-Language":"es"}});
+  const d=await r.json();
+  if(!d.length) throw new Error("No encontrado");
+  return{lat:+d[0].lat,lng:+d[0].lon,label:d[0].display_name.split(",").slice(0,2).join(", ")};
+}
+
+["origin","dest"].forEach(k=>{
+  const inp=document.getElementById(k+"-input");
+  inp.addEventListener("keydown",async e=>{
+    if(e.key!=="Enter") return;
+    inp.blur();
+    try{
+      const g=await geocode(inp.value);
+      if(k==="origin") setOrigin(g.lat,g.lng,g.label);
+      else setDest(g.lat,g.lng,g.label);
+    } catch { addAlert("No se encontró «"+inp.value+"»","danger"); }
+  });
+});
+
+document.getElementById("clear-origin").addEventListener("click",()=>{
+  S.originLL=null;
+  document.getElementById("origin-input").value="";
+  document.getElementById("clear-origin").style.display="none";
+  if(originMk){map.removeLayer(originMk);originMk=null;}
+  checkReady();
+});
+document.getElementById("clear-dest").addEventListener("click",()=>{
+  S.destLL=null;
+  document.getElementById("dest-input").value="";
+  document.getElementById("clear-dest").style.display="none";
+  if(destMk){map.removeLayer(destMk);destMk=null;}
+  checkReady();
+});
+
+// GPS button
+document.getElementById("gps-btn").addEventListener("click",()=>{
+  if(!navigator.geolocation){addAlert("GPS no disponible","warn");return;}
+  setStatus("loading","Obteniendo ubicación…");
+  navigator.geolocation.getCurrentPosition(
+    pos=>{
+      setOrigin(pos.coords.latitude,pos.coords.longitude,"Mi ubicación");
+      map.setView([pos.coords.latitude,pos.coords.longitude],15);
+      setStatus("ok",statusText());
+    },
+    ()=>addAlert("No se pudo obtener la ubicación","warn")
+  );
+});
+
+function setOrigin(lat,lng,label){
+  S.originLL={lat,lng};
+  const inp=document.getElementById("origin-input");
+  inp.value=label||`${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  document.getElementById("clear-origin").style.display="";
+  if(originMk) map.removeLayer(originMk);
+  originMk=L.marker([lat,lng],{icon:mkPin(getComputedStyle(document.documentElement).getPropertyValue("--green").trim(),"🅐")}).bindTooltip("Origen").addTo(map);
+  checkReady();
+}
+function setDest(lat,lng,label){
+  S.destLL={lat,lng};
+  const inp=document.getElementById("dest-input");
+  inp.value=label||`${lat.toFixed(4)}, ${lng.toFixed(4)}`;
+  document.getElementById("clear-dest").style.display="";
+  if(destMk) map.removeLayer(destMk);
+  destMk=L.marker([lat,lng],{icon:mkPin("#4D9CFF","🅑")}).bindTooltip("Destino").addTo(map);
+  checkReady();
+}
+
+function checkReady(){
+  document.getElementById("plan-btn").disabled=!(S.originLL&&S.destLL&&S.ambiciInfo.length>0);
+}
+function statusText(){
+  return `${S.ambiciInfo.length} AMBici · ${S.bicingInfo.length} Bicing · ${S.transferPairs.length} transbordos`;
+}
+
+// ── HAVERSINE ─────────────────────────────────────────────────────────────────
+function hav(la1,ln1,la2,ln2){
+  const R=6371000,dL=(la2-la1)*Math.PI/180,dN=(ln2-ln1)*Math.PI/180;
+  const a=Math.sin(dL/2)**2+Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dN/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+// ── DATA LOADING ──────────────────────────────────────────────────────────────
+async function loadData(){
+  setStatus("loading","Cargando datos…");
+  try{
+    const [ai,as_,bi,bs]=await Promise.all([
+      fetchGBFS(FEEDS.ambici_info),
+      fetchGBFS(FEEDS.ambici_status),
+      fetchGBFS(FEEDS.bicing_info),
+      fetchGBFS(FEEDS.bicing_status),
+    ]);
+    S.ambiciInfo=ai.data.stations;
+    S.bicingInfo=bi.data.stations;
+    as_.data.stations.forEach(s=>S.ambiciStatus[s.station_id]=s);
+    bs.data.stations.forEach(s=>S.bicingStatus[s.station_id]=s);
+    computePairs();
+    drawTransferDots();
+    setStatus("ok",statusText());
+    checkReady();
+    setInterval(refreshStatus,30000);
+  } catch(e){
+    setStatus("error","Error: "+e.message);
+    addAlert("No se pudieron cargar los datos GBFS. Comprueba la conexión.","danger");
+  }
+}
+
+async function refreshStatus(){
+  try{
+    const [as_,bs]=await Promise.all([
+      fetchGBFS(FEEDS.ambici_status),
+      fetchGBFS(FEEDS.bicing_status),
+    ]);
+    as_.data.stations.forEach(s=>S.ambiciStatus[s.station_id]=s);
+    bs.data.stations.forEach(s=>S.bicingStatus[s.station_id]=s);
+    if(S.monitorTimer) runMonitor();
+  } catch{}
+}
+
+// ── TRANSFER PAIRS ────────────────────────────────────────────────────────────
+// ALL AMBici+Bicing pairs within 300m — not just official border stations
+const XFER_RADIUS=300;
+function computePairs(){
+  S.transferPairs=[];
+  for(const a of S.ambiciInfo)
+    for(const b of S.bicingInfo){
+      const d=hav(a.lat,a.lon,b.lat,b.lon);
+      if(d<=XFER_RADIUS) S.transferPairs.push({a,b,d:Math.round(d)});
+    }
+  S.transferPairs.sort((x,y)=>x.d-y.d);
+}
+
+function drawTransferDots(){
+  // Show potential transfer points on map (subtle)
+  S.transferPairs.slice(0,80).forEach(({a})=>{
+    const m=L.circleMarker([a.lat,a.lon],{
+      radius:3,color:"#9B7FFF",fillColor:"#9B7FFF",
+      fillOpacity:.2,weight:1,opacity:.35
+    }).bindTooltip(`Transbordo posible`).addTo(map);
+    S.mapLayers.push(m);
+  });
+}
+
+// ── AVAILABILITY ──────────────────────────────────────────────────────────────
+const bikes_a = id => S.ambiciStatus[id]?.num_bikes_available ?? 0;
+const docks_a = id => S.ambiciStatus[id]?.num_docks_available ?? 0;
+const bikes_b = id => {
+  const s=S.bicingStatus[id]; if(!s) return 0;
+  const t=s.num_bikes_available_types;
+  return t ? (t.ebike||0)+(t.mechanical||0) : (s.num_bikes_available||0);
+};
+const docks_b = id => S.bicingStatus[id]?.num_docks_available ?? 0;
+
+function avail(val,cap){
+  if(!cap||val===0) return 0;
+  const r=val/cap;
+  return r<.1?0.1:r<.25?0.45:1;
+}
+function risk(score){
+  if(score>=.8) return{label:"OK",cls:"badge-high"};
+  if(score>=.45) return{label:"Riesgo",cls:"badge-med"};
+  return{label:"Crítico",cls:"badge-low"};
+}
+function numCls(n){return n===0?"num-bad":n<=2?"num-warn":"num-ok"}
+
+// ── PLAN ──────────────────────────────────────────────────────────────────────
+function plan(){
+  const O=S.originLL, D=S.destLL;
+  const origCands=S.ambiciInfo
+    .map(s=>({s,d:hav(O.lat,O.lng,s.lat,s.lon)}))
+    .filter(x=>x.d<=600).sort((a,b)=>a.d-b.d).slice(0,5);
+  const destCands=S.bicingInfo
+    .map(s=>({s,d:hav(D.lat,D.lng,s.lat,s.lon)}))
+    .filter(x=>x.d<=500).sort((a,b)=>a.d-b.d).slice(0,5);
+
+  if(!origCands.length){addAlert("Sin estaciones AMBici en 600m del origen","danger");return[];}
+  if(!destCands.length){addAlert("Sin estaciones Bicing en 500m del destino","danger");return[];}
+
+  const dOD=hav(O.lat,O.lng,D.lat,D.lng);
+  const scored=[];
+
+  for(const tp of S.transferPairs){
+    const dOA=hav(O.lat,O.lng,tp.a.lat,tp.a.lon);
+    const dBD=hav(tp.b.lat,tp.b.lon,D.lat,D.lng);
+    // Prune: detour filter
+    if(dOA+tp.d+dBD > dOD*2.8+800) continue;
+    if(dOA > 700) continue;
+
+    const da=docks_a(tp.a.station_id), capA=tp.a.capacity||20;
+    const bb=bikes_b(tp.b.station_id), capB=tp.b.capacity||30;
+
+    for(const {s:OS,d:dOS} of origCands){
+      const bO=bikes_a(OS.station_id), cO=OS.capacity||20;
+      for(const {s:DS,d:dDS} of destCands){
+        const dD=docks_b(DS.station_id), cD=DS.capacity||30;
+        const totalM=(dOS+hav(OS.lat,OS.lon,tp.a.lat,tp.a.lon)+tp.d
+                     +hav(tp.b.lat,tp.b.lon,DS.lat,DS.lon)+dDS)*1.25;
+        const av=Math.min(avail(bO,cO),avail(da,capA),avail(bb,capB),avail(dD,cD));
+        const ds=Math.max(0,1-totalM/18000);
+        scored.push({OS,TA:tp.a,TB:tp.b,DS,walkM:tp.d,totalM:Math.round(totalM),
+          av:{bO,da,bb,dD},avScore:av,score:av*.65+ds*.35});
+      }
+    }
+  }
+  if(!scored.length){addAlert("Sin combinaciones viables. Prueba expandiendo el radio.","warn");return[];}
+  scored.sort((a,b)=>b.score-a.score);
+  const seen=new Set(), out=[];
+  for(const r of scored){
+    const k=r.OS.station_id+"_"+r.TA.station_id+"_"+r.TB.station_id;
+    if(!seen.has(k)){seen.add(k);out.push(r);}
+    if(out.length>=3) break;
+  }
+  return out;
+}
+
+// ── RENDER ────────────────────────────────────────────────────────────────────
+function clearMapLayers(){
+  S.mapLayers.forEach(l=>map.removeLayer(l));
+  S.mapLayers=[];
+  // Re-add transfer dots
+  drawTransferDots();
+}
+
+function drawRoute(r){
+  clearMapLayers();
+  const {OS,TA,TB,DS}=r;
+  const pts=[
+    [S.originLL.lat,S.originLL.lng],
+    [OS.lat,OS.lon],[TA.lat,TA.lon],
+    [TB.lat,TB.lon],[DS.lat,DS.lon],
+    [S.destLL.lat,S.destLL.lng]
+  ];
+  const segs=[
+    {pts:pts.slice(0,2),color:"#8899B4",dash:"5,4",w:2},
+    {pts:pts.slice(1,3),color:"#1DEBA0",dash:null,w:4},
+    {pts:pts.slice(2,4),color:"#9B7FFF",dash:"3,3",w:2},
+    {pts:pts.slice(3,5),color:"#4D9CFF",dash:null,w:4},
+    {pts:pts.slice(4,6),color:"#8899B4",dash:"5,4",w:2},
+  ];
+  segs.forEach(({pts:p,color,dash,w})=>{
+    S.mapLayers.push(L.polyline(p,{color,weight:w,dashArray:dash,opacity:.9}).addTo(map));
+  });
+  [
+    {ll:[OS.lat,OS.lon],color:"#1DEBA0",tip:`AMBici: ${bikes_a(OS.station_id)} bicis`},
+    {ll:[TA.lat,TA.lon],color:"#9B7FFF",tip:`Transbordo: deja AMBici (${docks_a(TA.station_id)} anclajes)`},
+    {ll:[TB.lat,TB.lon],color:"#9B7FFF",tip:`Transbordo: coge Bicing (${bikes_b(TB.station_id)} bicis)`},
+    {ll:[DS.lat,DS.lon],color:"#4D9CFF",tip:`Bicing destino: ${docks_b(DS.station_id)} anclajes`},
+  ].forEach(({ll,color,tip})=>{
+    S.mapLayers.push(L.marker(ll,{icon:mkDot(color,9)}).bindTooltip(tip).addTo(map));
+  });
+  map.fitBounds(L.latLngBounds(pts.map(([a,b])=>L.latLng(a,b))).pad(.1));
+}
+
+function renderRoutes(routes){
+  const box=document.getElementById("routes-box");
+  if(!routes.length){ box.innerHTML=`<div class="empty"><div class="e-icon">⚠️</div><p>Sin rutas viables</p></div>`; return; }
+  box.innerHTML=routes.map((r,i)=>{
+    const rk=risk(r.avScore);
+    const {bO,da,bb,dD}=r.av;
+    const km=(r.totalM/1000).toFixed(1);
+    const sameXfer=hav(r.TA.lat,r.TA.lon,r.TB.lat,r.TB.lon)<50;
+    return `<div class="route-card${i===0?" active":""}" data-i="${i}" onclick="selectRoute(${i})">
+      <div class="rc-top">
+        <div class="rc-label">Opción ${i+1}${sameXfer?"":" <span style='font-size:.65rem;color:var(--purple)'>+walk ${r.walkM}m</span>"}</div>
+        <span class="rc-badge ${rk.cls}">${rk.label}</span>
+      </div>
+      <div class="leg"><span class="leg-icon">🟢</span><div class="leg-text"><strong>${r.OS.name||"Est. AMBici"}</strong><br>Bicis AMBici: <span class="${numCls(bO)}">${bO}</span></div></div>
+      <div class="leg"><span class="leg-icon">🔀</span><div class="leg-text"><strong>Transbordo${sameXfer?"":" (~"+r.walkM+"m)"}</strong><br>Anclajes AMBici: <span class="${numCls(da)}">${da}</span> · Bicis Bicing: <span class="${numCls(bb)}">${bb}</span></div></div>
+      <div class="leg"><span class="leg-icon">🔵</span><div class="leg-text"><strong>${r.DS.name||"Est. Bicing"}</strong><br>Anclajes Bicing: <span class="${numCls(dD)}">${dD}</span></div></div>
+      <div class="rc-footer">
+        <span class="rc-dist">~${km} km</span>
+        <button class="start-btn" onclick="startMonitor(${i});event.stopPropagation()">▶ Iniciar viaje</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function renderAlerts(r){
+  const {bO,da,bb,dD}=r.av;
+  const alerts=[];
+  if(bO===0) alerts.push({t:"danger",m:"Sin bicis AMBici en origen."});
+  else if(bO<=2) alerts.push({t:"warn",m:`Solo ${bO} bici(s) AMBici en origen.`});
+  if(da===0) alerts.push({t:"danger",m:"Sin anclajes en transbordo AMBici."});
+  else if(da<=2) alerts.push({t:"warn",m:`Solo ${da} anclaje(s) en transbordo AMBici.`});
+  if(bb===0) alerts.push({t:"danger",m:"Sin Bicing en el transbordo."});
+  else if(bb<=2) alerts.push({t:"warn",m:`Solo ${bb} Bicing disponible(s) en transbordo.`});
+  if(dD===0) alerts.push({t:"danger",m:"Sin anclajes Bicing en destino."});
+  else if(dD<=2) alerts.push({t:"warn",m:`Solo ${dD} anclaje(s) en destino.`});
+  if(!alerts.length) alerts.push({t:"ok",m:"Disponibilidad buena en todos los puntos. ¡Buen viaje!"});
+  document.getElementById("alerts-box").innerHTML=
+    alerts.map(a=>`<div class="alert al-${a.t}"><span class="al-icon">${a.t==="ok"?"✓":a.t==="warn"?"⚠":"✕"}</span><span>${a.m}</span></div>`).join("");
+}
+
+function selectRoute(i){
+  S.activeRoute=i;
+  document.querySelectorAll(".route-card").forEach((el,j)=>el.classList.toggle("active",j===i));
+  drawRoute(S.routes[i]);
+  renderAlerts(S.routes[i]);
+}
+
+// ── PLAN BUTTON ───────────────────────────────────────────────────────────────
+document.getElementById("plan-btn").addEventListener("click",()=>{
+  document.getElementById("alerts-box").innerHTML="";
+  S.routes=plan();
+  renderRoutes(S.routes);
+  if(S.routes.length){
+    selectRoute(0);
+    expandPanel("full");
+  }
+});
+
+// ── MONITOR ───────────────────────────────────────────────────────────────────
+function startMonitor(i){
+  S.activeRoute=i;
+  document.getElementById("monitor-bar").style.display="";
+  document.getElementById("monitor-log").innerHTML="";
+  logM("Monitoreo iniciado — actualización cada 30s");
+  setStatus("monitoring","En ruta");
+  if(S.monitorTimer) clearInterval(S.monitorTimer);
+  S.monitorTimer=setInterval(runMonitor,30000);
+}
+
+function runMonitor(){
+  const r=S.routes[S.activeRoute]; if(!r) return;
+  const da2=docks_a(r.TA.station_id), bb2=bikes_b(r.TB.station_id);
+  if(da2===0){logM("⚠ Sin anclajes AMBici — recalculando…");replanExcluding(r.TA.station_id,null);}
+  else if(bb2===0){logM("⚠ Sin Bicing en transbordo — recalculando…");replanExcluding(null,r.TB.station_id);}
+  else if(da2<=1){logM(`⚠ Solo ${da2} anclaje AMBici`);addAlert(`Solo ${da2} anclaje AMBici libre en el transbordo.`,"warn");}
+  else if(bb2<=1){logM(`⚠ Solo ${bb2} Bicing disponible`);addAlert(`Solo ${bb2} Bicing en el transbordo.`,"warn");}
+  else logM(`✓ OK · AMBici anclajes:${da2} · Bicing bicis:${bb2}`);
+}
+
+function replanExcluding(exA,exB){
+  const saved=S.transferPairs;
+  if(exA) S.transferPairs=S.transferPairs.filter(p=>p.a.station_id!==exA);
+  if(exB) S.transferPairs=S.transferPairs.filter(p=>p.b.station_id!==exB);
+  const nr=plan();
+  S.transferPairs=saved;
+  if(nr.length){
+    S.routes.unshift(nr[0]);
+    S.activeRoute=0;
+    renderRoutes(S.routes);
+    selectRoute(0);
+    addAlert(`Ruta recalculada: transbordo en ${nr[0].TB.name||"estación alternativa"}`,"warn");
+    logM(`→ Nuevo transbordo: ${nr[0].TB.name||"alt."}`);
+  } else {
+    addAlert("No hay alternativas. Considera el metro.","danger");
+    logM("✕ Sin alternativas viables");
+  }
+}
+
+document.getElementById("stop-btn").addEventListener("click",()=>{
+  clearInterval(S.monitorTimer); S.monitorTimer=null;
+  document.getElementById("monitor-bar").style.display="none";
+  setStatus("ok",statusText());
+  logM("Monitoreo detenido");
+});
+
+function logM(msg){
+  const log=document.getElementById("monitor-log");
+  const t=new Date().toLocaleTimeString("es",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  const d=document.createElement("div");
+  d.className="log-line";
+  d.innerHTML=`<span class="log-ts">${t}</span>${msg}`;
+  log.insertBefore(d,log.firstChild);
+  while(log.children.length>15) log.removeChild(log.lastChild);
+}
+
+// ── UI HELPERS ────────────────────────────────────────────────────────────────
+function setStatus(type,text){
+  const dot=document.getElementById("status-dot");
+  dot.className=type;
+  document.getElementById("status-text").textContent=text;
+}
+function addAlert(msg,type){
+  const box=document.getElementById("alerts-box");
+  const el=document.createElement("div");
+  el.className=`alert al-${type}`;
+  el.innerHTML=`<span class="al-icon">${type==="ok"?"✓":type==="warn"?"⚠":"✕"}</span><span>${msg}</span>`;
+  box.insertBefore(el,box.firstChild);
+  setTimeout(()=>el.remove(),9000);
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+loadData();
+</script>
+</body>
+</html>
