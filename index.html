@@ -240,18 +240,24 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-// ── GBFS FEEDS (proxied via Vercel rewrites — no CORS issues) ─────────────────
+// ── GBFS FEEDS (direct — both APIs have Access-Control-Allow-Origin: *) ───────
 const FEEDS = {
-  ambici_info:   "/api/ambici/station_information.json",
-  ambici_status: "/api/ambici/station_status.json",
-  bicing_info:   "/api/bicing/station_information",
-  bicing_status: "/api/bicing/station_status",
+  ambici_info:   "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bs/station_information.json",
+  ambici_status: "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bs/station_status.json",
+  bicing_info:   "https://api.bsmsa.eu/ext/api/bsm/gbfs/v2/en/station_information",
+  bicing_status: "https://api.bsmsa.eu/ext/api/bsm/gbfs/v2/en/station_status",
 };
 
 async function fetchGBFS(url) {
-  const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
-  if (!r.ok) throw new Error(`GBFS ${url} → HTTP ${r.status}`);
-  return r.json();
+  try {
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (r.ok) return r.json();
+  } catch {}
+  // Fallback por si el servicio está temporalmente caído o bloqueado
+  const proxied = "https://corsproxy.io/?" + encodeURIComponent(url);
+  const r2 = await fetch(proxied, { signal: AbortSignal.timeout(12000) });
+  if (!r2.ok) throw new Error(`GBFS fetch failed (${r2.status})`);
+  return r2.json();
 }
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
