@@ -240,21 +240,18 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-// ── GBFS FEEDS ────────────────────────────────────────────────────────────────
+// ── FEEDS ─────────────────────────────────────────────────────────────────────
 const FEEDS = {
   ambici_info:   "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bs/en/station_information.json",
   ambici_status: "https://gbfs.nextbike.net/maps/gbfs/v2/nextbike_bs/en/station_status.json",
-  bicing_info:   "https://api.bsmsa.eu/ext/api/bsm/gbfs/v2/en/station_information",
-  bicing_status: "https://api.bsmsa.eu/ext/api/bsm/gbfs/v2/en/station_status",
+  // CityBikes: CORS abierto, datos en tiempo real, sin API key
+  bicing: "https://api.citybik.es/v2/networks/bicing",
 };
 
-async function fetchGBFS(url) {
-  const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+async function fetchJSON(url) {
+  const r = await fetch(url, { signal: AbortSignal.timeout(10000) });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const json = await r.json();
-  // WSO2 API Manager blocked response comes as XML wrapped in JSON-ish — detect it
-  if (!json?.data) throw new Error("Respuesta inválida");
-  return json;
+  return r.json();
 }
 
 // ── STATE ─────────────────────────────────────────────────────────────────────
@@ -419,12 +416,26 @@ function hav(la1,ln1,la2,ln2){
 // ── DATA LOADING ──────────────────────────────────────────────────────────────
 async function loadBicing(){
   try{
-    const [bi,bs]=await Promise.all([
-      fetchGBFS(FEEDS.bicing_info),
-      fetchGBFS(FEEDS.bicing_status),
-    ]);
-    S.bicingInfo=bi.data.stations;
-    bs.data.stations.forEach(s=>S.bicingStatus[s.station_id]=s);
+    const d=await fetchJSON(FEEDS.bicing);
+    const stations=d.network.stations;
+    S.bicingInfo=stations.map(s=>({
+      station_id: s.id,
+      name: s.name.trim(),
+      lat: s.latitude,
+      lon: s.longitude,
+      capacity: (s.free_bikes||0)+(s.empty_slots||0),
+    }));
+    S.bicingStatus={};
+    stations.forEach(s=>{
+      S.bicingStatus[s.id]={
+        num_bikes_available: s.free_bikes||0,
+        num_docks_available: s.empty_slots||0,
+        num_bikes_available_types:{
+          ebike:  s.extra?.ebikes||0,
+          mechanical: s.extra?.normal_bikes||0,
+        },
+      };
+    });
     S.bicingOk=true;
     return true;
   } catch(e){
@@ -437,8 +448,8 @@ async function loadData(){
   setStatus("loading","Cargando datos…");
   try{
     const [ai,as_]=await Promise.all([
-      fetchGBFS(FEEDS.ambici_info),
-      fetchGBFS(FEEDS.ambici_status),
+      fetchJSON(FEEDS.ambici_info),
+      fetchJSON(FEEDS.ambici_status),
     ]);
     S.ambiciInfo=ai.data.stations;
     as_.data.stations.forEach(s=>S.ambiciStatus[s.station_id]=s);
@@ -462,7 +473,7 @@ async function loadData(){
 
 async function refreshStatus(){
   try{
-    const as_=await fetchGBFS(FEEDS.ambici_status);
+    const as_=await fetchJSON(FEEDS.ambici_status);
     as_.data.stations.forEach(s=>S.ambiciStatus[s.station_id]=s);
   } catch{}
 
