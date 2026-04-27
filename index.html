@@ -555,10 +555,9 @@ function plan(){
   const scored=[];
 
   for(const tp of S.transferPairs){
-    const dOA=hav(O.lat,O.lng,tp.a.lat,tp.a.lon);
     const dBD=hav(tp.b.lat,tp.b.lon,D.lat,D.lng);
-    if(dOA+tp.d+dBD > dOD*2.8+800) continue;
-    if(dOA > 700) continue;
+    // Filtro geométrico: el transbordo debe estar en la dirección correcta
+    if(dBD > dOD*1.4+800) continue;
 
     const da=docks_a(tp.a.station_id), capA=tp.a.capacity||20;
     const bb=bikes_b(tp.b.station_id), capB=tp.b.capacity||30;
@@ -567,10 +566,13 @@ function plan(){
       const bO=bikes_a(OS.station_id), cO=OS.capacity||20;
       for(const {s:DS,d:dDS} of destCands){
         const dD=docks_b(DS.station_id), cD=DS.capacity||30;
-        const totalM=(dOS+hav(OS.lat,OS.lon,tp.a.lat,tp.a.lon)+tp.d
-                     +hav(tp.b.lat,tp.b.lon,DS.lat,DS.lon)+dDS)*1.25;
+        const rideA=hav(OS.lat,OS.lon,tp.a.lat,tp.a.lon); // tramo AMBici
+        const rideB=hav(tp.b.lat,tp.b.lon,DS.lat,DS.lon); // tramo Bicing
+        const totalM=(dOS+rideA+tp.d+rideB+dDS)*1.25;
+        // Penalizar detours: el tramo en bici no debería ser >3× la distancia directa
+        if(rideA+rideB > dOD*3+1000) continue;
         const av=Math.min(avail(bO,cO),avail(da,capA),avail(bb,capB),avail(dD,cD));
-        const ds=Math.max(0,1-totalM/18000);
+        const ds=Math.max(0,1-totalM/30000); // normalizar sobre 30km para rutas largas
         scored.push({OS,TA:tp.a,TB:tp.b,DS,walkM:tp.d,totalM:Math.round(totalM),
           av:{bO,da,bb,dD},avScore:av,score:av*.65+ds*.35});
       }
@@ -634,7 +636,7 @@ function renderRoutes(routes){
     const sameXfer=hav(r.TA.lat,r.TA.lon,r.TB.lat,r.TB.lon)<50;
     return `<div class="route-card${i===0?" active":""}" data-i="${i}" onclick="selectRoute(${i})">
       <div class="rc-top">
-        <div class="rc-label">Opción ${i+1}${sameXfer?"":" <span style='font-size:.65rem;color:var(--purple)'>+walk ${r.walkM}m</span>"}</div>
+        <div class="rc-label">Opción ${i+1}${sameXfer?"":" <span style='font-size:.65rem;color:var(--purple)'>+walk "+r.walkM+"m</span>"}</div>
         <span class="rc-badge ${rk.cls}">${rk.label}</span>
       </div>
       <div class="leg"><span class="leg-icon">🟢</span><div class="leg-text"><strong>${r.OS.name||"Est. AMBici"}</strong><br>Bicis AMBici: <span class="${numCls(bO)}">${bO}</span></div></div>
