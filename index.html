@@ -193,6 +193,16 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
   font-size:.72rem!important;border-radius:8px!important;
   box-shadow:0 4px 16px #00000060!important;padding:.3rem .6rem!important
 }
+.leaflet-popup-content-wrapper{
+  background:var(--s2)!important;border:1px solid var(--border)!important;
+  color:var(--text)!important;font-family:'Syne',sans-serif!important;
+  font-size:.78rem!important;border-radius:12px!important;
+  box-shadow:0 4px 20px #00000070!important;padding:0!important
+}
+.leaflet-popup-content{margin:.55rem .75rem!important;line-height:1.5}
+.leaflet-popup-content b{color:var(--green)}
+.leaflet-popup-tip{background:var(--s2)!important}
+.leaflet-popup-close-button{color:var(--sub)!important;font-size:1rem!important;top:4px!important;right:6px!important}
 
 /* scrollbar */
 ::-webkit-scrollbar{width:3px}
@@ -479,12 +489,12 @@ document.getElementById("panel-header").addEventListener("click",()=>{
 
 // ── GEOCODING ─────────────────────────────────────────────────────────────────
 async function geocode(q){
-  // bounded to BCN metro area: Badalona, Barcelona, L'Hospitalet, Sant Adrià
   const viewbox="1.85,41.65,2.45,41.22";
-  const r=await fetch(
-    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=es&viewbox=${viewbox}&bounded=1`,
-    {headers:{"Accept-Language":"es"}});
-  const d=await r.json();
+  const base=`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=es`;
+  const headers={"Accept-Language":"es"};
+  // Try bounded first, then unbounded within Spain as fallback
+  let d=(await (await fetch(`${base}&viewbox=${viewbox}&bounded=1`,{headers})).json());
+  if(!d.length) d=(await (await fetch(`${base}&viewbox=${viewbox}`,{headers})).json());
   if(!d.length) throw new Error("No encontrado");
   return{lat:+d[0].lat,lng:+d[0].lon,label:d[0].display_name.split(",").slice(0,2).join(", ")};
 }
@@ -499,6 +509,19 @@ async function geocode(q){
       if(k==="origin") setOrigin(g.lat,g.lng,g.label);
       else setDest(g.lat,g.lng,g.label);
     } catch { addAlert("No se encontró «"+inp.value+"»","danger"); }
+  });
+  inp.addEventListener("input",()=>{
+    if(inp.value.trim()) return;
+    if(k==="origin"){
+      S.originLL=null;
+      document.getElementById("clear-origin").style.display="none";
+      if(originMk){map.removeLayer(originMk);originMk=null;}
+    } else {
+      S.destLL=null;
+      document.getElementById("clear-dest").style.display="none";
+      if(destMk){map.removeLayer(destMk);destMk=null;}
+    }
+    checkReady();
   });
 });
 
@@ -699,21 +722,23 @@ function drawStationDots(){
     const color=bk===0?"#FF5252":bk<=2?"#F0A040":"#1DEBA0";
     S.mapLayers.push(
       L.circleMarker([s.lat,s.lon],{
-        radius:4,color:"#0a0",fillColor:color,
-        fillOpacity:.85,weight:1,opacity:.9
-      }).bindTooltip(`AMBici: ${s.name||"estación"} · ⚡${bk} e-bici`).addTo(map)
+        radius:7,color:"#0a0",fillColor:color,
+        fillOpacity:.85,weight:1.5,opacity:.9,
+        interactive:true
+      }).bindPopup(`<b>AMBici</b><br>${s.name||"estación"}<br>⚡ ${bk} e-bici disponibles`).addTo(map)
     );
   });
   S.bicingInfo.forEach(s=>{
     const bk=bikes_b(s.station_id);
     const eb=ebikes_b(s.station_id), mb=mech_b(s.station_id);
-    const bikeStr=eb+mb>0?`⚡${eb} e-bici · 🔧${mb} normal`:`${bk} bicis`;
+    const bikeStr=eb+mb>0?`⚡ ${eb} e-bici · 🔧 ${mb} mecánica`:`${bk} bicis`;
     const color=bk===0?"#FF5252":bk<=2?"#F0A040":"#4D9CFF";
     S.mapLayers.push(
       L.circleMarker([s.lat,s.lon],{
-        radius:3,color:"#048",fillColor:color,
-        fillOpacity:.8,weight:1,opacity:.9
-      }).bindTooltip(`Bicing: ${s.name||"estación"} · ${bikeStr}`).addTo(map)
+        radius:5,color:"#048",fillColor:color,
+        fillOpacity:.8,weight:1.5,opacity:.9,
+        interactive:true
+      }).bindPopup(`<b>Bicing</b><br>${s.name||"estación"}<br>${bikeStr}`).addTo(map)
     );
   });
 }
