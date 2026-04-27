@@ -201,6 +201,28 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
 /* tap feedback */
 .route-card:active{transform:scale(.985)}
 
+/* user location dot */
+.user-dot{
+  width:16px;height:16px;background:#4D9CFF;border-radius:50%;
+  border:2.5px solid #fff;box-shadow:0 2px 8px #0007;
+  animation:userPulse 2s ease-out infinite;
+}
+@keyframes userPulse{
+  0%  {box-shadow:0 0 0 0 #4D9CFF55,0 2px 8px #0007}
+  70% {box-shadow:0 0 0 12px #4D9CFF00,0 2px 8px #0007}
+  100%{box-shadow:0 0 0 0 #4D9CFF00,0 2px 8px #0007}
+}
+
+/* phase progress bar */
+#phase-bar{
+  display:flex;gap:4px;margin-bottom:.5rem;
+}
+.phase-seg{
+  flex:1;height:3px;border-radius:2px;background:var(--border2);transition:background .4s;
+}
+.phase-seg.done{background:var(--green)}
+.phase-seg.active{background:var(--amber);animation:blink 1s infinite}
+
 /* floating map controls */
 #map-controls{
   position:absolute;right:12px;top:calc(var(--safe-top) + 14px);
@@ -258,6 +280,13 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
       <div id="alerts-box"></div>
       <div id="monitor-bar" style="display:none">
         <h4>Monitor en ruta</h4>
+        <div id="phase-bar">
+          <div class="phase-seg active" data-ph="0"></div>
+          <div class="phase-seg" data-ph="1"></div>
+          <div class="phase-seg" data-ph="2"></div>
+          <div class="phase-seg" data-ph="3"></div>
+          <div class="phase-seg" data-ph="4"></div>
+        </div>
         <div id="monitor-log"></div>
         <button id="stop-btn">⏹ Detener</button>
       </div>
@@ -317,7 +346,8 @@ const S = {
   ambiciInfo:[], ambiciStatus:{}, bicingInfo:[], bicingStatus:{},
   transferPairs:[], originLL:null, destLL:null,
   routes:[], monitorTimer:null,
-  mapLayers:[], activeBounds:null
+  mapLayers:[], activeBounds:null,
+  watchId:null, userMarker:null, followUser:false, monitorPhase:0
 };
 
 // ── MAP ───────────────────────────────────────────────────────────────────────
@@ -346,6 +376,11 @@ function mkPin(color,ch="●"){
     iconAnchor:[16,32]
   });
 }
+
+function mkUserDot(){
+  return L.divIcon({className:"",html:'<div class="user-dot"></div>',iconAnchor:[8,8]});
+}
+map.on("dragstart",()=>{ S.followUser=false; });
 
 let originMk=null, destMk=null;
 map.on("click",({latlng})=>{
@@ -438,7 +473,12 @@ document.getElementById("gps-btn").addEventListener("click",()=>{
 
 // ── FLOATING MAP BUTTONS ──────────────────────────────────────────────────────
 document.getElementById("mc-locate").addEventListener("click",()=>{
-  geolocate(c=>map.setView([c.latitude,c.longitude],16));
+  if(S.monitorTimer){
+    S.followUser=true;
+    if(S.userLL) map.setView([S.userLL.lat,S.userLL.lng],16);
+  } else {
+    geolocate(c=>map.setView([c.latitude,c.longitude],16));
+  }
 });
 document.getElementById("mc-route").addEventListener("click",()=>{
   if(S.activeBounds) fitVisible(S.activeBounds);
@@ -822,51 +862,154 @@ document.getElementById("plan-btn").addEventListener("click",()=>{
 });
 
 // ── MONITOR ───────────────────────────────────────────────────────────────────
+// ── MONITOR ───────────────────────────────────────────────────────────────────
+const PHASE_LABELS=[
+  "→ Ve a la estación AMBici",
+  "🚴 Pedalea hasta el transbordo",
+  "🚶 Camina a la estación Bicing",
+  "🚴 Pedalea hasta el destino",
+  "🚶 Camina hasta tu destino",
+];
+const ARRIVED_M=60; // metros para considerar que has llegado a un punto
+
+function updatePhaseBar(ph){
+  document.querySelectorAll(".phase-seg").forEach((el,i)=>{
+    el.classList.toggle("done",i<ph);
+    el.classList.toggle("active",i===ph);
+  });
+}
+
+function detectPhase(lat,lng){
+  const r=S.routes[S.activeRoute]; if(!r) return;
+  const ph=S.monitorPhase;
+  const waypoints=[
+    {lat:r.OS.lat,lon:r.OS.lon},  // ph 0→1: llegaste a OS
+    {lat:r.TA.lat,lon:r.TA.lon},  // ph 1→2: llegaste a TA
+    {lat:r.TB.lat,lon:r.TB.lon},  // ph 2→3: llegaste a TB
+    {lat:r.DS.lat,lon:r.DS.lon},  // ph 3→4: llegaste a DS
+    {lat:S.destLL.lat,lon:S.destLL.lng}, // ph 4→5: llegaste al destino
+  ];
+  if(ph>=5) return;
+  const d=hav(lat,lng,waypoints[ph].lat,waypoints[ph].lon);
+  if(d<ARRIVED_M){
+    const newPh=ph+1;
+    S.monitorPhase=newPh;
+    updatePhaseBar(newPh);
+    if(newPh<=4) { logM(PHASE_LABELS[newPh]); addAlert(PHASE_LABELS[newPh],"ok"); }
+    if(newPh===5){ logM("🎉 ¡Has llegado!"); stopMonitor(true); }
+  }
+}
+
+function onGPSUpdate(coords){
+  const {latitude:lat,longitude:lng}=coords;
+  S.userLL={lat,lng};
+  if(!S.userMarker){
+    S.userMarker=L.marker([lat,lng],{icon:mkUserDot(),zIndexOffset:1000}).addTo(map);
+  } else {
+    S.userMarker.setLatLng([lat,lng]);
+  }
+  if(S.followUser) map.panTo([lat,lng],{animate:true,duration:0.8});
+  detectPhase(lat,lng);
+}
+
 function startMonitor(i){
   S.activeRoute=i;
+  S.monitorPhase=0;
+  S.followUser=true;
   document.getElementById("monitor-bar").style.display="";
   document.getElementById("monitor-log").innerHTML="";
-  logM("Monitoreo iniciado — actualización cada 30s");
+  updatePhaseBar(0);
+  logM(PHASE_LABELS[0]);
   setStatus("monitoring","En ruta");
+  expandPanel("half"); // mostrar mapa + panel a la vez
   if(S.monitorTimer) clearInterval(S.monitorTimer);
   S.monitorTimer=setInterval(runMonitor,30000);
+  // GPS tracking
+  if(S.watchId!==null) navigator.geolocation.clearWatch(S.watchId);
+  if(navigator.geolocation){
+    S.watchId=navigator.geolocation.watchPosition(
+      pos=>onGPSUpdate(pos.coords),
+      ()=>logM("GPS no disponible — solo monitoreo de estaciones"),
+      {enableHighAccuracy:true,maximumAge:5000,timeout:15000}
+    );
+  } else {
+    logM("GPS no soportado — solo monitoreo de estaciones");
+  }
 }
 
 function runMonitor(){
   const r=S.routes[S.activeRoute]; if(!r) return;
-  const da2=docks_a(r.TA.station_id), bb2=bikes_b(r.TB.station_id);
-  if(da2===0){logM("⚠ Sin anclajes AMBici — recalculando…");replanExcluding(r.TA.station_id,null);}
-  else if(bb2===0){logM("⚠ Sin Bicing en transbordo — recalculando…");replanExcluding(null,r.TB.station_id);}
-  else if(da2<=1){logM(`⚠ Solo ${da2} anclaje AMBici`);addAlert(`Solo ${da2} anclaje AMBici libre en el transbordo.`,"warn");}
-  else if(bb2<=1){logM(`⚠ Solo ${bb2} Bicing disponible`);addAlert(`Solo ${bb2} Bicing en el transbordo.`,"warn");}
-  else logM(`✓ OK · AMBici anclajes:${da2} · Bicing bicis:${bb2}`);
+  const ph=S.monitorPhase;
+  // Fase 0: aún no has cogido la bici AMBici
+  if(ph===0){
+    const bO=bikes_a(r.OS.station_id);
+    if(bO===0){ logM("⚠ Sin bicis AMBici en origen — recalculando…"); replanOrigin(r.OS.station_id); return; }
+    if(bO<=2)   logM(`⚠ Solo ${bO} bici(s) AMBici en origen`);
+  }
+  // Fases 0-1: aún no has dejado la bici AMBici
+  if(ph<=1){
+    const da=docks_a(r.TA.station_id);
+    if(da===0){ logM("⚠ Sin anclajes AMBici en transbordo — recalculando…"); replanExcluding(r.TA.station_id,null); return; }
+    if(da<=1)   logM(`⚠ Solo ${da} anclaje(s) AMBici en transbordo`);
+  }
+  // Fases 0-2: aún no has cogido la bici Bicing
+  if(ph<=2){
+    const bb=bikes_b(r.TB.station_id);
+    if(bb===0){ logM("⚠ Sin Bicing en transbordo — recalculando…"); replanExcluding(null,r.TB.station_id); return; }
+    if(bb<=1)   logM(`⚠ Solo ${bb} Bicing en transbordo`);
+  }
+  // Fases 0-3: aún no has dejado la bici Bicing
+  if(ph<=3){
+    const dD=docks_b(r.DS.station_id);
+    if(dD===0){ logM("⚠ Sin anclajes Bicing en destino — recalculando destino…"); replanDest(r.DS.station_id); return; }
+    if(dD<=1)   logM(`⚠ Solo ${dD} anclaje(s) Bicing en destino`);
+  }
+  if(ph<=4) logM(`✓ Estaciones OK · fase ${ph+1}/5`);
 }
 
+function replanOrigin(exOS){
+  // Busca candidatos de origen excluyendo la estación problemática
+  const saved=S.ambiciInfo;
+  S.ambiciInfo=S.ambiciInfo.filter(s=>s.station_id!==exOS);
+  const nr=plan(); S.ambiciInfo=saved;
+  applyReplan(nr,"nueva salida en "+( nr[0]?.OS.name||"alt."));
+}
 function replanExcluding(exA,exB){
   const saved=S.transferPairs;
   if(exA) S.transferPairs=S.transferPairs.filter(p=>p.a.station_id!==exA);
   if(exB) S.transferPairs=S.transferPairs.filter(p=>p.b.station_id!==exB);
-  const nr=plan();
-  S.transferPairs=saved;
+  const nr=plan(); S.transferPairs=saved;
+  applyReplan(nr,"transbordo en "+(nr[0]?.TB.name||"alt."));
+}
+function replanDest(exDS){
+  const saved=S.bicingInfo;
+  S.bicingInfo=S.bicingInfo.filter(s=>s.station_id!==exDS);
+  const nr=plan(); S.bicingInfo=saved;
+  applyReplan(nr,"destino en "+(nr[0]?.DS.name||"alt."));
+}
+function applyReplan(nr,desc){
   if(nr.length){
-    S.routes.unshift(nr[0]);
-    S.activeRoute=0;
-    renderRoutes(S.routes);
-    selectRoute(0);
-    addAlert(`Ruta recalculada: transbordo en ${nr[0].TB.name||"estación alternativa"}`,"warn");
-    logM(`→ Nuevo transbordo: ${nr[0].TB.name||"alt."}`);
+    S.routes.unshift(nr[0]); S.activeRoute=0;
+    renderRoutes(S.routes); selectRoute(0);
+    addAlert(`Ruta recalculada: ${desc}`,"warn");
+    logM(`→ Recalculada: ${desc}`);
   } else {
-    addAlert("No hay alternativas. Considera el metro.","danger");
+    addAlert("Sin alternativas. Considera el metro.","danger");
     logM("✕ Sin alternativas viables");
   }
 }
 
-document.getElementById("stop-btn").addEventListener("click",()=>{
+function stopMonitor(arrived=false){
   clearInterval(S.monitorTimer); S.monitorTimer=null;
-  document.getElementById("monitor-bar").style.display="none";
+  if(S.watchId!==null){ navigator.geolocation.clearWatch(S.watchId); S.watchId=null; }
+  if(S.userMarker){ map.removeLayer(S.userMarker); S.userMarker=null; }
+  S.followUser=false; S.monitorPhase=0;
+  if(!arrived) document.getElementById("monitor-bar").style.display="none";
   setStatus("ok",statusText());
-  logM("Monitoreo detenido");
-});
+  if(!arrived) logM("Monitoreo detenido");
+}
+
+document.getElementById("stop-btn").addEventListener("click",()=>stopMonitor());
 
 function logM(msg){
   const log=document.getElementById("monitor-log");
