@@ -40,8 +40,8 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
   height:92vh;
   display:flex;flex-direction:column;
 }
-#panel.collapsed{transform:translateY(calc(100% - 120px))}
-#panel.half{transform:translateY(40%)}
+#panel.peek{transform:translateY(calc(100% - 80px))}
+#panel.half{transform:translateY(44%)}
 #panel.full{transform:translateY(0)}
 
 /* drag handle */
@@ -247,7 +247,6 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
   <div id="map-controls">
     <button class="map-btn" id="mc-locate" title="Mi ubicación">📍</button>
     <button class="map-btn" id="mc-route"  title="Centrar ruta">🎯</button>
-    <button class="map-btn" id="mc-north"  title="Vista general">⬆</button>
   </div>
 
   <div id="panel" class="half">
@@ -389,33 +388,90 @@ map.on("click",({latlng})=>{
 });
 
 // ── PANEL DRAG ────────────────────────────────────────────────────────────────
-let dragStart=null, panelStates=["collapsed","half","full"];
 const panel=document.getElementById("panel");
 const handle=document.getElementById("drag-handle");
 
-handle.addEventListener("touchstart",e=>{
-  dragStart=e.touches[0].clientY;
-},{passive:true});
-handle.addEventListener("touchend",e=>{
-  if(dragStart===null) return;
-  const diff=dragStart-e.changedTouches[0].clientY;
-  const cur=panelStates.indexOf(panel.dataset.state||"half");
-  if(diff>40 && cur<2) expandPanel(panelStates[cur+1]);
-  else if(diff<-40 && cur>0) expandPanel(panelStates[cur-1]);
-  dragStart=null;
-});
+// Returns the translateY pixel value for a given state
+function stateToY(state){
+  const ph=panel.offsetHeight;
+  if(state==="full") return 0;
+  if(state==="half") return Math.round(ph*0.44);
+  return ph-80; // peek: only 80px visible
+}
 
 function expandPanel(state){
-  panel.className="";
-  panel.classList.add(state);
+  panel.style.transform=""; // let CSS class handle it
+  panel.className=state;
   panel.dataset.state=state;
 }
 expandPanel("half");
 
-// Tap header to toggle — collapses fully so the map is visible
-document.getElementById("panel-header").addEventListener("click",()=>{
+function togglePanel(){
   const cur=panel.dataset.state||"half";
-  expandPanel(cur==="collapsed"?"half":"collapsed");
+  expandPanel(cur==="full"?"half":cur==="half"?"peek":"half");
+}
+
+let drag=null, lastToggleMs=0;
+
+function startDrag(e){
+  drag={
+    startY:e.touches[0].clientY,
+    startT:stateToY(panel.dataset.state||"half"),
+    lastY:e.touches[0].clientY,
+    lastMs:Date.now(),
+    vel:0, moved:false,
+  };
+  panel.style.transition="none";
+  document.addEventListener("touchmove",moveDrag,{passive:false});
+  document.addEventListener("touchend",endDrag,{once:true});
+}
+
+function moveDrag(e){
+  if(!drag) return;
+  const y=e.touches[0].clientY;
+  const ph=panel.offsetHeight;
+  const delta=y-drag.startY;
+  if(Math.abs(delta)>6) drag.moved=true;
+  const clamped=Math.max(0,Math.min(ph-80,drag.startT+delta));
+  panel.style.transform=`translateY(${clamped}px)`;
+  const now=Date.now(), dt=now-drag.lastMs;
+  if(dt>16){ drag.vel=(y-drag.lastY)/dt*1000; drag.lastY=y; drag.lastMs=now; }
+}
+
+function endDrag(e){
+  document.removeEventListener("touchmove",moveDrag);
+  if(!drag) return;
+  panel.style.transition="";
+  if(!drag.moved){
+    lastToggleMs=Date.now();
+    togglePanel();
+    drag=null; return;
+  }
+  const y=e.changedTouches[0].clientY;
+  const ph=panel.offsetHeight;
+  const curT=drag.startT+(y-drag.startY);
+  const v=drag.vel;
+  let target;
+  if(v>400) target=curT>stateToY("half")?"peek":"half";
+  else if(v<-400) target=curT<stateToY("half")?"full":"half";
+  else{
+    const opts=["full","half","peek"];
+    let best="half",minD=Infinity;
+    opts.forEach(s=>{ const d=Math.abs(curT-stateToY(s)); if(d<minD){minD=d;best=s;} });
+    target=best;
+  }
+  expandPanel(target);
+  drag=null;
+}
+
+// Drag from handle or header
+handle.addEventListener("touchstart",startDrag,{passive:true});
+document.getElementById("panel-header").addEventListener("touchstart",startDrag,{passive:true});
+
+// Click for desktop / mouse users (suppress if already handled by touch)
+document.getElementById("panel-header").addEventListener("click",()=>{
+  if(Date.now()-lastToggleMs<300) return;
+  togglePanel();
 });
 
 // ── GEOCODING ─────────────────────────────────────────────────────────────────
@@ -483,10 +539,6 @@ document.getElementById("mc-locate").addEventListener("click",()=>{
 document.getElementById("mc-route").addEventListener("click",()=>{
   if(S.activeBounds) fitVisible(S.activeBounds);
 });
-document.getElementById("mc-north").addEventListener("click",()=>{
-  // Reset to overview of both networks
-  map.setView([41.40,2.18],13);
-});
 
 function setOrigin(lat,lng,label){
   S.originLL={lat,lng};
@@ -521,11 +573,11 @@ function statusText(){
 // ── MAP HELPERS ───────────────────────────────────────────────────────────────
 // Fit bounds into the visible map area above the panel
 function panelCoverPx(){
+  const ph=panel.offsetHeight;
   const state=panel.dataset.state||"half";
-  const ph=window.innerHeight*0.92; // panel height (92vh)
-  if(state==="full")      return ph;
-  if(state==="half")      return ph*0.6;
-  return 120; // collapsed: only drag handle peeking
+  if(state==="full") return ph;
+  if(state==="half") return ph*0.56;
+  return 80; // peek
 }
 function fitVisible(bounds){
   const bottomPad=panelCoverPx()+16;
@@ -874,7 +926,7 @@ document.getElementById("plan-btn").addEventListener("click",()=>{
   renderRoutes(S.routes);
   if(S.routes.length){
     selectRoute(0);
-    expandPanel("full");
+    expandPanel("half");
   }
 });
 
