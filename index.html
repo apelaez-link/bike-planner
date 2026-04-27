@@ -200,11 +200,33 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
 
 /* tap feedback */
 .route-card:active{transform:scale(.985)}
+
+/* floating map controls */
+#map-controls{
+  position:absolute;right:12px;top:calc(var(--safe-top) + 14px);
+  z-index:9;display:flex;flex-direction:column;gap:8px;
+}
+.map-btn{
+  width:42px;height:42px;
+  background:var(--s1);border:1px solid var(--border2);border-radius:11px;
+  color:var(--text);font-size:1.15rem;line-height:1;
+  display:flex;align-items:center;justify-content:center;
+  cursor:pointer;box-shadow:0 2px 12px #00000070;
+  -webkit-tap-highlight-color:transparent;transition:background .12s;
+}
+.map-btn:active{background:var(--s2)}
+#mc-route{display:none}
 </style>
 </head>
 <body>
 <div id="app">
   <div id="map"></div>
+
+  <div id="map-controls">
+    <button class="map-btn" id="mc-locate" title="Mi ubicación">📍</button>
+    <button class="map-btn" id="mc-route"  title="Centrar ruta">🎯</button>
+    <button class="map-btn" id="mc-north"  title="Vista general">⬆</button>
+  </div>
 
   <div id="panel" class="half">
     <div id="drag-handle"></div>
@@ -295,7 +317,7 @@ const S = {
   ambiciInfo:[], ambiciStatus:{}, bicingInfo:[], bicingStatus:{},
   transferPairs:[], originLL:null, destLL:null,
   routes:[], monitorTimer:null,
-  mapLayers:[]
+  mapLayers:[], activeBounds:null
 };
 
 // ── MAP ───────────────────────────────────────────────────────────────────────
@@ -402,17 +424,28 @@ document.getElementById("clear-dest").addEventListener("click",()=>{
 });
 
 // GPS button
-document.getElementById("gps-btn").addEventListener("click",()=>{
+function geolocate(onSuccess){
   if(!navigator.geolocation){addAlert("GPS no disponible","warn");return;}
   setStatus("loading","Obteniendo ubicación…");
   navigator.geolocation.getCurrentPosition(
-    pos=>{
-      setOrigin(pos.coords.latitude,pos.coords.longitude,"Mi ubicación");
-      map.setView([pos.coords.latitude,pos.coords.longitude],15);
-      setStatus("ok",statusText());
-    },
+    pos=>{ setStatus("ok",statusText()); onSuccess(pos.coords); },
     ()=>addAlert("No se pudo obtener la ubicación","warn")
   );
+}
+document.getElementById("gps-btn").addEventListener("click",()=>{
+  geolocate(c=>{ setOrigin(c.latitude,c.longitude,"Mi ubicación"); map.setView([c.latitude,c.longitude],15); });
+});
+
+// ── FLOATING MAP BUTTONS ──────────────────────────────────────────────────────
+document.getElementById("mc-locate").addEventListener("click",()=>{
+  geolocate(c=>map.setView([c.latitude,c.longitude],16));
+});
+document.getElementById("mc-route").addEventListener("click",()=>{
+  if(S.activeBounds) fitVisible(S.activeBounds);
+});
+document.getElementById("mc-north").addEventListener("click",()=>{
+  // Reset to overview of both networks
+  map.setView([41.40,2.18],13);
 });
 
 function setOrigin(lat,lng,label){
@@ -443,6 +476,20 @@ function checkReady(){
 function statusText(){
   const b=S.bicingOk?`${S.bicingInfo.length} Bicing`:"Bicing ⚠";
   return `${S.ambiciInfo.length} AMBici · ${b} · ${S.transferPairs.length} transbordos`;
+}
+
+// ── MAP HELPERS ───────────────────────────────────────────────────────────────
+// Fit bounds into the visible map area above the panel
+function panelCoverPx(){
+  const state=panel.dataset.state||"half";
+  const ph=window.innerHeight*0.92; // panel height (92vh)
+  if(state==="full")      return ph;
+  if(state==="half")      return ph*0.6;
+  return 120; // collapsed: only drag handle peeking
+}
+function fitVisible(bounds){
+  const bottomPad=panelCoverPx()+16;
+  map.fitBounds(bounds,{paddingTopLeft:[20,20],paddingBottomRight:[20,bottomPad]});
 }
 
 // ── HAVERSINE ─────────────────────────────────────────────────────────────────
@@ -662,7 +709,10 @@ async function drawRoute(r){
     [O.lat,O.lng],[OS.lat,OS.lon],[TA.lat,TA.lon],
     [TB.lat,TB.lon],[DS.lat,DS.lon],[D.lat,D.lng],
   ];
-  map.fitBounds(L.latLngBounds(fallbackPts.map(([a,b])=>L.latLng(a,b))).pad(.1));
+  const routeBounds=L.latLngBounds(fallbackPts.map(([a,b])=>L.latLng(a,b))).pad(.08);
+  S.activeBounds=routeBounds;
+  document.getElementById("mc-route").style.display="flex";
+  fitVisible(routeBounds);
 
   // Fetch all 5 segments in parallel
   const [w1,c1,w2,c2,w3]=await Promise.all([
