@@ -713,8 +713,8 @@ function plan(){
         const rideA=hav(OS.lat,OS.lon,tp.a.lat,tp.a.lon); // tramo AMBici
         const rideB=hav(tp.b.lat,tp.b.lon,DS.lat,DS.lon); // tramo Bicing
         const totalM=(dOS+rideA+tp.d+rideB+dDS)*1.25;
-        // Penalizar detours: el tramo en bici no debería ser >3× la distancia directa
-        if(rideA+rideB > dOD*3+1000) continue;
+        // Descartar detours: tramo en bici no debe exceder 2.5× la distancia directa
+        if(rideA+rideB > dOD*2.5+800) continue;
         const av=Math.min(avail(bO,cO),avail(da,capA),avail(bb,capB),avail(dD,cD));
         const ds=Math.max(0,1-totalM/30000);
         const dw=Math.max(0,1-tp.d/XFER_RADIUS);
@@ -725,7 +725,7 @@ function plan(){
         const timeMin=Math.round(((dOS+tp.d+dDS)*1.25/80)+((rideA+rideB)*1.25/220));
         scored.push({OS,TA:tp.a,TB:tp.b,DS,walkM:tp.d,totalM:Math.round(totalM),timeMin,
           segs:{dOS:Math.round(dOS),rideA:Math.round(rideA),rideB:Math.round(rideB),dDS:Math.round(dDS)},
-          av:{bO,da,bb,dD},avScore:av,score:av*.45+routeEff*.30+ds*.15+dw*.10});
+          av:{bO,da,bb,dD},avScore:av,score:av*.40+routeEff*.38+ds*.12+dw*.10});
       }
     }
   }
@@ -733,11 +733,14 @@ function plan(){
   scored.sort((a,b)=>b.score-a.score);
   const seen=new Set(), out=[];
   for(const r of scored){
-    const k=r.OS.station_id+"_"+r.TA.station_id+"_"+r.TB.station_id;
+    // Deduplicate by AMBici dropoff station — each result uses a different transfer location
+    const k=r.TA.station_id;
     if(!seen.has(k)){seen.add(k);out.push(r);}
     if(out.length>=10) break;
   }
-  return out;
+  // Drop clearly broken routes (near-zero availability) if better ones exist
+  const viable=out.filter(r=>r.score>=0.2);
+  return viable.length>=2 ? viable : out;
 }
 
 // ── RENDER ────────────────────────────────────────────────────────────────────
