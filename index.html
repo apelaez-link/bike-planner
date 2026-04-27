@@ -690,7 +690,7 @@ async function loadData(){
   drawStationDots();
   setStatus(bicingOk?"ok":"loading", statusText());
   checkReady();
-  setInterval(refreshStatus,30000);
+  setInterval(refreshStatus,120000); // 2 min — citybik.es rate limit
 }
 
 async function refreshStatus(){
