@@ -640,30 +640,35 @@ function drawStationDots(){
       L.circleMarker([s.lat,s.lon],{
         radius:4,color:"#0a0",fillColor:color,
         fillOpacity:.85,weight:1,opacity:.9
-      }).bindTooltip(`AMBici: ${s.name||"estación"} · ${bk} bicis`).addTo(map)
+      }).bindTooltip(`AMBici: ${s.name||"estación"} · ⚡${bk} e-bici`).addTo(map)
     );
   });
   S.bicingInfo.forEach(s=>{
     const bk=bikes_b(s.station_id);
+    const eb=ebikes_b(s.station_id), mb=mech_b(s.station_id);
+    const bikeStr=eb+mb>0?`⚡${eb} e-bici · 🔧${mb} normal`:`${bk} bicis`;
     const color=bk===0?"#FF5252":bk<=2?"#F0A040":"#4D9CFF";
     S.mapLayers.push(
       L.circleMarker([s.lat,s.lon],{
         radius:3,color:"#048",fillColor:color,
         fillOpacity:.8,weight:1,opacity:.9
-      }).bindTooltip(`Bicing: ${s.name||"estación"} · ${bk} bicis`).addTo(map)
+      }).bindTooltip(`Bicing: ${s.name||"estación"} · ${bikeStr}`).addTo(map)
     );
   });
 }
 
 // ── AVAILABILITY ──────────────────────────────────────────────────────────────
-const bikes_a = id => S.ambiciStatus[id]?.num_bikes_available ?? 0;
-const docks_a = id => S.ambiciStatus[id]?.num_docks_available ?? 0;
-const bikes_b = id => {
+const bikes_a  = id => S.ambiciStatus[id]?.num_bikes_available ?? 0;
+const ebikes_a = id => bikes_a(id); // AMBici = sistema puro e-bike (vehicle_type 204)
+const docks_a  = id => S.ambiciStatus[id]?.num_docks_available ?? 0;
+const bikes_b  = id => {
   const s=S.bicingStatus[id]; if(!s) return 0;
   const t=s.num_bikes_available_types;
   return t ? (t.ebike||0)+(t.mechanical||0) : (s.num_bikes_available||0);
 };
-const docks_b = id => S.bicingStatus[id]?.num_docks_available ?? 0;
+const ebikes_b = id => S.bicingStatus[id]?.num_bikes_available_types?.ebike ?? 0;
+const mech_b   = id => S.bicingStatus[id]?.num_bikes_available_types?.mechanical ?? 0;
+const docks_b  = id => S.bicingStatus[id]?.num_docks_available ?? 0;
 
 function avail(val,cap){
   if(!cap||val===0) return 0;
@@ -712,12 +717,15 @@ function plan(){
         if(rideA+rideB > dOD*3+1000) continue;
         const av=Math.min(avail(bO,cO),avail(da,capA),avail(bb,capB),avail(dD,cD));
         const ds=Math.max(0,1-totalM/30000);
-        const dw=Math.max(0,1-tp.d/XFER_RADIUS); // 1=same spot, 0=300m walk
+        const dw=Math.max(0,1-tp.d/XFER_RADIUS);
+        // Eficiencia de ruta: penaliza desvíos respecto a la línea directa O→D
+        const detour=Math.max(0,(rideA+rideB)-dOD);
+        const routeEff=Math.max(0,1-detour/Math.max(dOD,1000));
         // time: walk 80m/min, cycle 220m/min, all with 1.25 road factor
         const timeMin=Math.round(((dOS+tp.d+dDS)*1.25/80)+((rideA+rideB)*1.25/220));
         scored.push({OS,TA:tp.a,TB:tp.b,DS,walkM:tp.d,totalM:Math.round(totalM),timeMin,
           segs:{dOS:Math.round(dOS),rideA:Math.round(rideA),rideB:Math.round(rideB),dDS:Math.round(dDS)},
-          av:{bO,da,bb,dD},avScore:av,score:av*.55+ds*.20+dw*.25});
+          av:{bO,da,bb,dD},avScore:av,score:av*.45+routeEff*.30+ds*.15+dw*.10});
       }
     }
   }
@@ -786,6 +794,12 @@ async function drawRoute(r){
   });
 }
 
+function bikeDetail(bicingId){
+  const eb=ebikes_b(bicingId), mb=mech_b(bicingId), tot=bikes_b(bicingId);
+  if(eb+mb===0) return `<span class="${numCls(tot)}">${tot}</span> bicis`;
+  return `<span class="${numCls(eb)}">⚡${eb}</span> · <span class="${numCls(mb)}">🔧${mb}</span>`;
+}
+
 function routeCard(r,i){
   const rk=risk(r.avScore);
   const {bO,da,bb,dD}=r.av;
@@ -799,11 +813,11 @@ function routeCard(r,i){
     </div>
     <div class="leg"><span class="leg-icon">🟢</span><div class="leg-text">
       <strong>${r.OS.name||"Est. AMBici"}</strong> · ${dOS}m andando<br>
-      Bicis AMBici: <span class="${numCls(bO)}">${bO}</span>
+      <span class="${numCls(bO)}">⚡${bO}</span> e-bici disponibles
     </div></div>
     <div class="leg"><span class="leg-icon">🔀</span><div class="leg-text">
       <strong>Transbordo</strong> · <span style="color:var(--purple)">${walkLabel}</span><br>
-      Anclajes AMBici: <span class="${numCls(da)}">${da}</span> · Bicis Bicing: <span class="${numCls(bb)}">${bb}</span>
+      Anclajes AMBici: <span class="${numCls(da)}">${da}</span> · Bicing: ${bikeDetail(r.TB.station_id)}
     </div></div>
     <div class="leg"><span class="leg-icon">🔵</span><div class="leg-text">
       <strong>${r.DS.name||"Est. Bicing"}</strong> · ${dDS}m andando<br>
