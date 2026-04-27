@@ -409,6 +409,7 @@ expandPanel("half");
 function togglePanel(){
   const cur=panel.dataset.state||"half";
   expandPanel(cur==="full"?"half":cur==="half"?"peek":"half");
+  if(S.activeBounds && panel.dataset.state!=="full") fitVisible(S.activeBounds);
 }
 
 let drag=null, lastToggleMs=0;
@@ -461,6 +462,7 @@ function endDrag(e){
     target=best;
   }
   expandPanel(target);
+  if(S.activeBounds && target!=="full") fitVisible(S.activeBounds);
   drag=null;
 }
 
