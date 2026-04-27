@@ -49,6 +49,7 @@ html,body{height:100%;overflow:hidden;font-family:'Syne',sans-serif;background:v
   width:36px;height:4px;background:var(--border2);border-radius:2px;
   margin:10px auto 0;flex-shrink:0;cursor:grab
 }
+#panel.full #drag-handle{margin-top:calc(var(--safe-top) + 10px)}
 
 /* panel header */
 #panel-header{
@@ -526,16 +527,16 @@ function geolocate(onSuccess){
   );
 }
 document.getElementById("gps-btn").addEventListener("click",()=>{
-  geolocate(c=>{ setOrigin(c.latitude,c.longitude,"Mi ubicación"); map.setView([c.latitude,c.longitude],15); });
+  geolocate(c=>{ setOrigin(c.latitude,c.longitude,"Mi ubicación"); setViewVisible({lat:c.latitude,lng:c.longitude},15); });
 });
 
 // ── FLOATING MAP BUTTONS ──────────────────────────────────────────────────────
 document.getElementById("mc-locate").addEventListener("click",()=>{
   if(S.monitorTimer){
     S.followUser=true;
-    if(S.userLL) map.setView([S.userLL.lat,S.userLL.lng],16);
+    if(S.userLL) setViewVisible(S.userLL,16);
   } else {
-    geolocate(c=>map.setView([c.latitude,c.longitude],16));
+    geolocate(c=>setViewVisible({lat:c.latitude,lng:c.longitude},16));
   }
 });
 document.getElementById("mc-route").addEventListener("click",()=>{
@@ -584,6 +585,12 @@ function panelCoverPx(){
 function fitVisible(bounds){
   const bottomPad=panelCoverPx()+16;
   map.fitBounds(bounds,{paddingTopLeft:[20,20],paddingBottomRight:[20,bottomPad]});
+}
+function setViewVisible(latlng,zoom){
+  const z=zoom||map.getZoom();
+  const pt=map.project(latlng,z);
+  const center=map.unproject([pt.x,pt.y+panelCoverPx()/2],z);
+  map.setView(center,z);
 }
 
 // ── HAVERSINE ─────────────────────────────────────────────────────────────────
