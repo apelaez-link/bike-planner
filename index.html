@@ -347,15 +347,18 @@ function expandPanel(state){
 }
 expandPanel("half");
 
-// Tap header to toggle
+// Tap header to toggle — collapses fully so the map is visible
 document.getElementById("panel-header").addEventListener("click",()=>{
   const cur=panel.dataset.state||"half";
-  expandPanel(cur==="full"?"half":"full");
+  expandPanel(cur==="collapsed"?"half":"collapsed");
 });
 
 // ── GEOCODING ─────────────────────────────────────────────────────────────────
 async function geocode(q){
-  const r=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=es`,
+  // bounded to BCN metro area: Badalona, Barcelona, L'Hospitalet, Sant Adrià
+  const viewbox="1.85,41.65,2.45,41.22";
+  const r=await fetch(
+    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=es&viewbox=${viewbox}&bounded=1`,
     {headers:{"Accept-Language":"es"}});
   const d=await r.json();
   if(!d.length) throw new Error("No encontrado");
@@ -493,7 +496,7 @@ async function loadData(){
   }
 
   computePairs();
-  drawTransferDots();
+  drawStationDots();
   setStatus(bicingOk?"ok":"loading", statusText());
   checkReady();
   setInterval(refreshStatus,30000);
@@ -509,7 +512,7 @@ async function refreshStatus(){
   const nowOk=await loadBicing();
   if(!wasOk && nowOk){
     computePairs();
-    drawTransferDots();
+    drawStationDots();
     addAlert("Bicing recuperado.","ok");
     setStatus("ok",statusText());
     checkReady();
@@ -534,13 +537,26 @@ function computePairs(){
   S.transferPairs.sort((x,y)=>x.d-y.d);
 }
 
-function drawTransferDots(){
-  S.transferPairs.slice(0,80).forEach(({a})=>{
-    const m=L.circleMarker([a.lat,a.lon],{
-      radius:3,color:"#9B7FFF",fillColor:"#9B7FFF",
-      fillOpacity:.2,weight:1,opacity:.35
-    }).bindTooltip(`Transbordo posible`).addTo(map);
-    S.mapLayers.push(m);
+function drawStationDots(){
+  S.ambiciInfo.forEach(s=>{
+    const bk=bikes_a(s.station_id);
+    const color=bk===0?"#FF5252":bk<=2?"#F0A040":"#1DEBA0";
+    S.mapLayers.push(
+      L.circleMarker([s.lat,s.lon],{
+        radius:4,color:"#0a0",fillColor:color,
+        fillOpacity:.85,weight:1,opacity:.9
+      }).bindTooltip(`AMBici: ${s.name||"estación"} · ${bk} bicis`).addTo(map)
+    );
+  });
+  S.bicingInfo.forEach(s=>{
+    const bk=bikes_b(s.station_id);
+    const color=bk===0?"#FF5252":bk<=2?"#F0A040":"#4D9CFF";
+    S.mapLayers.push(
+      L.circleMarker([s.lat,s.lon],{
+        radius:3,color:"#048",fillColor:color,
+        fillOpacity:.8,weight:1,opacity:.9
+      }).bindTooltip(`Bicing: ${s.name||"estación"} · ${bk} bicis`).addTo(map)
+    );
   });
 }
 
@@ -600,9 +616,10 @@ function plan(){
         // Penalizar detours: el tramo en bici no debería ser >3× la distancia directa
         if(rideA+rideB > dOD*3+1000) continue;
         const av=Math.min(avail(bO,cO),avail(da,capA),avail(bb,capB),avail(dD,cD));
-        const ds=Math.max(0,1-totalM/30000); // normalizar sobre 30km para rutas largas
+        const ds=Math.max(0,1-totalM/30000);
+        const dw=Math.max(0,1-tp.d/XFER_RADIUS); // 1=same spot, 0=300m walk
         scored.push({OS,TA:tp.a,TB:tp.b,DS,walkM:tp.d,totalM:Math.round(totalM),
-          av:{bO,da,bb,dD},avScore:av,score:av*.65+ds*.35});
+          av:{bO,da,bb,dD},avScore:av,score:av*.55+ds*.20+dw*.25});
       }
     }
   }
@@ -621,7 +638,7 @@ function plan(){
 function clearMapLayers(){
   S.mapLayers.forEach(l=>map.removeLayer(l));
   S.mapLayers=[];
-  drawTransferDots();
+  drawStationDots();
 }
 
 async function drawRoute(r){
